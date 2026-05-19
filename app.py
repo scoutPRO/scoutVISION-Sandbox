@@ -6,7 +6,6 @@ recruit highlight reels.
 
 import json
 import os
-import sqlite3
 import threading
 import time
 import uuid
@@ -15,22 +14,21 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-from dotenv import load_dotenv
 from flask import Flask, redirect, render_template, request, url_for
 from google import genai
 from google.genai import types
 from werkzeug.utils import secure_filename
 
-load_dotenv()
-
-DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
-UPLOAD_DIR = DATA_DIR / "uploads"
-DB_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "prompt_lab.sqlite3"))
-PROMPT_PATH = Path(os.getenv("BOILERPLATE_PROMPT_PATH", "prompts/boilerplate.txt"))
-MAX_VIDEO_SECONDS = int(os.getenv("MAX_VIDEO_SECONDS", "300"))
-MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "800"))
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
-ALLOWED_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".webm", ".mkv"}
+from database import SessionLocal, ensure_storage
+from models import PromptRun
+from settings import (
+    ALLOWED_EXTENSIONS,
+    DEFAULT_MODEL,
+    MAX_UPLOAD_MB,
+    MAX_VIDEO_SECONDS,
+    PROMPT_PATH,
+    UPLOAD_DIR,
+)
 
 DEFAULT_USER_PROMPT = "Identify what a coach should notice first about this recruit."
 
@@ -39,39 +37,8 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 
 def init_db() -> None:
-    """Create runtime directories and the prompt run table if needed."""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS prompt_runs (
-                id TEXT PRIMARY KEY,
-                created_at TEXT NOT NULL,
-                video_filename TEXT NOT NULL,
-                stored_video_path TEXT NOT NULL,
-                video_duration_seconds REAL,
-                model TEXT NOT NULL,
-                boilerplate_prompt TEXT NOT NULL,
-                user_prompt TEXT NOT NULL,
-                full_prompt TEXT NOT NULL,
-                response_text TEXT,
-                parsed_response_json TEXT,
-                full_response_json TEXT,
-                status TEXT NOT NULL,
-                error TEXT,
-                feedback_rating TEXT,
-                feedback_notes TEXT
-            )
-            """
-        )
-
-
-def get_db() -> sqlite3.Connection:
-    """Return a SQLite connection configured to expose rows by column name."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Create runtime directories and apply database migrations."""
+    ensure_storage()
 
 
 def load_boilerplate_prompt() -> str:
@@ -168,31 +135,29 @@ def call_gemini(video_path: Path, prompt: str, model: str) -> tuple[str, str, st
     return response_text, parsed_response_json, full_response_json
 
 
-def recent_runs() -> list[sqlite3.Row]:
+def recent_runs() -> list[PromptRun]:
     """Return recent prompt runs for the index page."""
-    with get_db() as conn:
-        return conn.execute(
-            "SELECT * FROM prompt_runs ORDER BY created_at DESC LIMIT 50"
-        ).fetchall()
+    with SessionLocal() as session:
+        return session.query(PromptRun).order_by(PromptRun.created_at.desc()).limit(50).all()
 
 
-def find_run(run_id: str) -> sqlite3.Row | None:
+def find_run(run_id: str) -> PromptRun | None:
     """Return one prompt run by ID, or None when it does not exist."""
-    with get_db() as conn:
-        return conn.execute("SELECT * FROM prompt_runs WHERE id = ?", (run_id,)).fetchone()
+    with SessionLocal() as session:
+        return session.get(PromptRun, run_id)
 
 
 def update_run(run_id: str, **fields: Any) -> None:
     """Update selected columns for a prompt run."""
     if not fields:
         return
-    assignments = ", ".join(f"{field} = ?" for field in fields)
-    values = [*fields.values(), run_id]
-    with get_db() as conn:
-        conn.execute(
-            f"UPDATE prompt_runs SET {assignments} WHERE id = ?",
-            values,
-        )
+    with SessionLocal() as session:
+        run = session.get(PromptRun, run_id)
+        if run is None:
+            return
+        for field, value in fields.items():
+            setattr(run, field, value)
+        session.commit()
 
 
 def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
@@ -281,33 +246,21 @@ def submit():
     boilerplate_prompt = load_boilerplate_prompt()
     full_prompt = f"{boilerplate_prompt}\n\nUSER REQUEST:\n{user_prompt}"
 
-    with get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO prompt_runs (
-                id, created_at, video_filename, stored_video_path, video_duration_seconds,
-                model, boilerplate_prompt, user_prompt, full_prompt, response_text,
-                parsed_response_json, full_response_json, status, error
+    with SessionLocal() as session:
+        session.add(
+            PromptRun(
+                id=run_id,
+                created_at=datetime.now(UTC),
+                video_filename=video.filename,
+                stored_video_path=str(stored_path),
+                model=model,
+                boilerplate_prompt=boilerplate_prompt,
+                user_prompt=user_prompt,
+                full_prompt=full_prompt,
+                status="queued",
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                datetime.now(UTC).isoformat(),
-                video.filename,
-                str(stored_path),
-                None,
-                model,
-                boilerplate_prompt,
-                user_prompt,
-                full_prompt,
-                None,
-                None,
-                None,
-                "queued",
-                None,
-            ),
         )
+        session.commit()
 
     start_background_run(run_id, stored_path, full_prompt, model)
     return redirect(url_for("result", run_id=run_id))
@@ -329,11 +282,7 @@ def feedback(run_id: str):
     if rating not in {"like", "dislike"}:
         rating = None
     notes = request.form.get("notes", "").strip()
-    with get_db() as conn:
-        conn.execute(
-            "UPDATE prompt_runs SET feedback_rating = ?, feedback_notes = ? WHERE id = ?",
-            (rating, notes, run_id),
-        )
+    update_run(run_id, feedback_rating=rating, feedback_notes=notes)
     return redirect(url_for("result", run_id=run_id))
 
 

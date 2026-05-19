@@ -11,6 +11,7 @@ Small tester site for iterating on Gemini prompts against recruit highlight reel
 - Runs Gemini processing in a lightweight Flask background thread so uploads return quickly.
 - Shows a clean response view plus the full Gemini response JSON.
 - Stores runs, prompts, outputs, like/dislike feedback, and feedback notes in SQLite.
+- Manages the database schema with SQLAlchemy ORM models and Alembic migrations.
 
 ## Local Setup
 
@@ -49,9 +50,25 @@ with `ruff format --check`.
 - `GEMINI_MODEL`: default `gemini-2.5-pro`.
 - `DATA_DIR`: default `data`.
 - `DATABASE_PATH`: default `data/prompt_lab.sqlite3`.
+- `DATABASE_URL`: optional SQLAlchemy database URL. Defaults to SQLite from `DATABASE_PATH`.
 - `MAX_VIDEO_SECONDS`: default `300`.
 - `MAX_UPLOAD_MB`: default `800`.
 - `PORT`: used by Railway, default local port `5055`.
+
+## Database Migrations
+
+The app runs Alembic migrations on startup for this sandbox. You can also run them
+explicitly:
+
+```bash
+poetry run alembic upgrade head
+```
+
+After changing SQLAlchemy models, create a migration with:
+
+```bash
+poetry run alembic revision --autogenerate -m "Describe schema change"
+```
 
 ## Railway Notes
 
