@@ -1,0 +1,20 @@
+[project]
+name = "scoutvision-sandbox"
+version = "0.1.0"
+description = "Small tester site for iterating on Gemini prompts against recruit highlight reels."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "flask>=3.1.0,<4.0.0",
+    "google-genai>=1.73.1,<2.0.0",
+    "gunicorn>=23.0.0,<24.0.0",
+    "opencv-python-headless>=4.12.0.88,<5.0.0.0",
+    "python-dotenv>=1.1.0,<2.0.0",
+]
+
+[tool.poetry]
+package-mode = false
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
