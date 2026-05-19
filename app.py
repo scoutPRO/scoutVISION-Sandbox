@@ -4,57 +4,33 @@ This is a small beta tester app for iterating on Gemini prompts against
 recruit highlight reels.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import sqlite3
+import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
-from flask import Flask, redirect, render_template_string, request, url_for
-from werkzeug.utils import secure_filename
-
 import cv2
+from dotenv import load_dotenv
+from flask import Flask, redirect, render_template, request, url_for
 from google import genai
 from google.genai import types
-
+from werkzeug.utils import secure_filename
 
 load_dotenv()
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 DB_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "prompt_lab.sqlite3"))
+PROMPT_PATH = Path(os.getenv("BOILERPLATE_PROMPT_PATH", "prompts/boilerplate.txt"))
 MAX_VIDEO_SECONDS = int(os.getenv("MAX_VIDEO_SECONDS", "300"))
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "800"))
 DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".webm", ".mkv"}
-
-BOILERPLATE_PROMPT = """You are helping a college or team coach evaluate a recruit's highlight reel.
-
-Analyze only what is visible in the uploaded video. Be careful, specific, and avoid inventing context that is not in the clip.
-
-Return JSON with this shape:
-{
-  "summary": "short coach-facing summary",
-  "strengths": ["specific strengths visible in the reel"],
-  "concerns_or_unknowns": ["limitations, unclear signals, or things the video does not prove"],
-  "notable_moments": [
-    {
-      "timestamp": "mm:ss",
-      "observation": "what happened",
-      "why_it_matters": "why a coach might care"
-    }
-  ],
-  "coach_follow_up_questions": ["questions the coach should ask or verify"],
-  "fit_signals": ["signals related to role, athletic traits, decision making, effort, or coachability"]
-}
-
-Use plain language suitable for a coach reviewing many recruits. Keep the response concise unless the user's ask requests more detail."""
 
 DEFAULT_USER_PROMPT = "Identify what a coach should notice first about this recruit."
 
@@ -63,6 +39,7 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 
 def init_db() -> None:
+    """Create runtime directories and the prompt run table if needed."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
@@ -91,16 +68,24 @@ def init_db() -> None:
 
 
 def get_db() -> sqlite3.Connection:
+    """Return a SQLite connection configured to expose rows by column name."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 
+def load_boilerplate_prompt() -> str:
+    """Load the coach-facing boilerplate prompt from disk."""
+    return PROMPT_PATH.read_text(encoding="utf-8").strip()
+
+
 def allowed_video(filename: str) -> bool:
+    """Return whether the uploaded filename has a supported video extension."""
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
 
 
 def get_video_duration(path: Path) -> float:
+    """Return the duration of a video file in seconds."""
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         raise RuntimeError("Could not open uploaded video.")
@@ -113,6 +98,7 @@ def get_video_duration(path: Path) -> float:
 
 
 def to_jsonable(value: Any) -> Any:
+    """Convert a Gemini SDK response object into JSON-serializable data."""
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, list):
@@ -129,6 +115,7 @@ def to_jsonable(value: Any) -> Any:
 
 
 def wait_for_active(client: Any, uploaded_file: Any, max_wait_seconds: int = 180) -> Any:
+    """Poll Gemini until an uploaded file is active or fails to become active."""
     start = time.time()
     while getattr(getattr(uploaded_file, "state", None), "name", None) == "PROCESSING":
         if time.time() - start > max_wait_seconds:
@@ -143,6 +130,7 @@ def wait_for_active(client: Any, uploaded_file: Any, max_wait_seconds: int = 180
 
 
 def call_gemini(video_path: Path, prompt: str, model: str) -> tuple[str, str, str]:
+    """Upload a video to Gemini and return display, parsed, and raw responses."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is required.")
@@ -181,6 +169,7 @@ def call_gemini(video_path: Path, prompt: str, model: str) -> tuple[str, str, st
 
 
 def recent_runs() -> list[sqlite3.Row]:
+    """Return recent prompt runs for the index page."""
     with get_db() as conn:
         return conn.execute(
             "SELECT * FROM prompt_runs ORDER BY created_at DESC LIMIT 50"
@@ -188,133 +177,83 @@ def recent_runs() -> list[sqlite3.Row]:
 
 
 def find_run(run_id: str) -> sqlite3.Row | None:
+    """Return one prompt run by ID, or None when it does not exist."""
     with get_db() as conn:
         return conn.execute("SELECT * FROM prompt_runs WHERE id = ?", (run_id,)).fetchone()
 
 
-INDEX_HTML = """
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>ScoutVision Gemini Sandbox</title>
-    <style>
-      body { font-family: system-ui, sans-serif; max-width: 960px; margin: 32px auto; line-height: 1.4; }
-      label { display: block; margin-top: 16px; font-weight: 600; }
-      input[type="file"], input[type="text"], textarea { width: 100%; box-sizing: border-box; }
-      textarea { min-height: 150px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-      button { margin-top: 16px; padding: 8px 12px; }
-      pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f5f5; padding: 12px; }
-      .error { color: #a40000; font-weight: 600; }
-      .run { border-top: 1px solid #ddd; padding: 10px 0; }
-    </style>
-  </head>
-  <body>
-    <h1>ScoutVision Gemini Sandbox</h1>
-    <form action="{{ url_for('submit') }}" method="post" enctype="multipart/form-data">
-      <label>Highlight reel, max {{ max_minutes }} minutes</label>
-      <input type="file" name="video" accept="video/*" required>
+def update_run(run_id: str, **fields: Any) -> None:
+    """Update selected columns for a prompt run."""
+    if not fields:
+        return
+    assignments = ", ".join(f"{field} = ?" for field in fields)
+    values = [*fields.values(), run_id]
+    with get_db() as conn:
+        conn.execute(
+            f"UPDATE prompt_runs SET {assignments} WHERE id = ?",
+            values,
+        )
 
-      <label>Coach ask</label>
-      <textarea name="user_prompt" required>{{ default_user_prompt }}</textarea>
 
-      <label>Gemini model</label>
-      <input type="text" name="model" value="{{ default_model }}" required>
+def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
+    """Process one queued run and persist the Gemini result or failure."""
+    update_run(run_id, status="processing", error=None)
+    try:
+        video_path = Path(stored_path)
+        duration = get_video_duration(video_path)
+        if duration > MAX_VIDEO_SECONDS:
+            raise RuntimeError(
+                f"Video is {duration:.1f} seconds; max is {MAX_VIDEO_SECONDS} seconds."
+            )
+        response_text, parsed_response_json, full_response_json = call_gemini(
+            video_path, full_prompt, model
+        )
+        update_run(
+            run_id,
+            video_duration_seconds=duration,
+            response_text=response_text,
+            parsed_response_json=parsed_response_json,
+            full_response_json=full_response_json,
+            status="completed",
+            error=None,
+        )
+    except Exception as exc:
+        update_run(run_id, status="failed", error=str(exc))
 
-      <details>
-        <summary>Boilerplate prompt that will be prepended</summary>
-        <pre>{{ boilerplate }}</pre>
-      </details>
 
-      <button type="submit">Submit</button>
-    </form>
-
-    {% if error %}
-      <p class="error">{{ error }}</p>
-    {% endif %}
-
-    <h2>Recent runs</h2>
-    {% for run in runs %}
-      <div class="run">
-        <a href="{{ url_for('result', run_id=run['id']) }}">{{ run['created_at'] }} - {{ run['video_filename'] }}</a>
-        <div>Status: {{ run['status'] }}{% if run['feedback_rating'] %}; feedback: {{ run['feedback_rating'] }}{% endif %}</div>
-      </div>
-    {% else %}
-      <p>No runs yet.</p>
-    {% endfor %}
-  </body>
-</html>
-"""
-
-RESULT_HTML = """
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>Prompt Run {{ run['id'] }}</title>
-    <style>
-      body { font-family: system-ui, sans-serif; max-width: 960px; margin: 32px auto; line-height: 1.4; }
-      textarea { width: 100%; min-height: 100px; box-sizing: border-box; }
-      pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f5f5; padding: 12px; }
-      .error { color: #a40000; font-weight: 600; }
-      label { display: block; margin-top: 8px; }
-      button { margin-top: 12px; padding: 8px 12px; }
-    </style>
-  </head>
-  <body>
-    <p><a href="{{ url_for('index') }}">Back</a></p>
-    <h1>Prompt Run</h1>
-    <p><strong>Status:</strong> {{ run['status'] }}</p>
-    <p><strong>Video:</strong> {{ run['video_filename'] }}</p>
-    <p><strong>Duration:</strong> {{ "%.1f"|format(run['video_duration_seconds'] or 0) }} seconds</p>
-    <p><strong>Model:</strong> {{ run['model'] }}</p>
-
-    {% if run['error'] %}
-      <h2>Error</h2>
-      <p class="error">{{ run['error'] }}</p>
-    {% endif %}
-
-    <h2>Response</h2>
-    <pre>{{ run['parsed_response_json'] or run['response_text'] or '' }}</pre>
-
-    <details>
-      <summary>Full Gemini response JSON</summary>
-      <pre>{{ run['full_response_json'] or '{}' }}</pre>
-    </details>
-
-    <details>
-      <summary>Full prompt sent to Gemini</summary>
-      <pre>{{ run['full_prompt'] }}</pre>
-    </details>
-
-    <h2>Feedback</h2>
-    <form action="{{ url_for('feedback', run_id=run['id']) }}" method="post">
-      <label><input type="radio" name="rating" value="like" {% if run['feedback_rating'] == 'like' %}checked{% endif %}> Like</label>
-      <label><input type="radio" name="rating" value="dislike" {% if run['feedback_rating'] == 'dislike' %}checked{% endif %}> Dislike</label>
-      <label>Notes</label>
-      <textarea name="notes">{{ run['feedback_notes'] or '' }}</textarea>
-      <button type="submit">Save feedback</button>
-    </form>
-  </body>
-</html>
-"""
+def start_background_run(
+    run_id: str,
+    stored_path: Path,
+    full_prompt: str,
+    model: str,
+) -> None:
+    """Start a daemon thread that processes one prompt run."""
+    thread = threading.Thread(
+        target=process_run,
+        args=(run_id, str(stored_path), full_prompt, model),
+        daemon=True,
+    )
+    thread.start()
 
 
 @app.before_request
 def ensure_db() -> None:
+    """Ensure local storage exists before handling a request."""
     init_db()
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    """Return a simple health-check response."""
     return {"status": "ok"}
 
 
 @app.get("/")
 def index():
-    return render_template_string(
-        INDEX_HTML,
-        boilerplate=BOILERPLATE_PROMPT,
+    """Render the upload form and recent prompt runs."""
+    return render_template(
+        "index.html",
+        boilerplate=load_boilerplate_prompt(),
         default_model=DEFAULT_MODEL,
         default_user_prompt=DEFAULT_USER_PROMPT,
         error=request.args.get("error"),
@@ -325,6 +264,7 @@ def index():
 
 @app.post("/submit")
 def submit():
+    """Create a queued prompt run and start background processing."""
     video = request.files.get("video")
     if not video or not video.filename:
         return redirect(url_for("index", error="Upload a video file."))
@@ -338,26 +278,8 @@ def submit():
 
     user_prompt = request.form.get("user_prompt", "").strip()
     model = request.form.get("model", DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    full_prompt = f"{BOILERPLATE_PROMPT}\n\nUSER REQUEST:\n{user_prompt}"
-    duration = None
-    response_text = None
-    parsed_response_json = None
-    full_response_json = None
-    status = "completed"
-    error = None
-
-    try:
-        duration = get_video_duration(stored_path)
-        if duration > MAX_VIDEO_SECONDS:
-            raise RuntimeError(
-                f"Video is {duration:.1f} seconds; max is {MAX_VIDEO_SECONDS} seconds."
-            )
-        response_text, parsed_response_json, full_response_json = call_gemini(
-            stored_path, full_prompt, model
-        )
-    except Exception as exc:
-        status = "failed"
-        error = str(exc)
+    boilerplate_prompt = load_boilerplate_prompt()
+    full_prompt = f"{boilerplate_prompt}\n\nUSER REQUEST:\n{user_prompt}"
 
     with get_db() as conn:
         conn.execute(
@@ -371,35 +293,38 @@ def submit():
             """,
             (
                 run_id,
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
                 video.filename,
                 str(stored_path),
-                duration,
+                None,
                 model,
-                BOILERPLATE_PROMPT,
+                boilerplate_prompt,
                 user_prompt,
                 full_prompt,
-                response_text,
-                parsed_response_json,
-                full_response_json,
-                status,
-                error,
+                None,
+                None,
+                None,
+                "queued",
+                None,
             ),
         )
 
+    start_background_run(run_id, stored_path, full_prompt, model)
     return redirect(url_for("result", run_id=run_id))
 
 
 @app.get("/runs/<run_id>")
 def result(run_id: str):
+    """Render one prompt run, including status, response, and feedback form."""
     run = find_run(run_id)
     if run is None:
         return redirect(url_for("index", error="Run not found."))
-    return render_template_string(RESULT_HTML, run=run)
+    return render_template("result.html", run=run)
 
 
 @app.post("/runs/<run_id>/feedback")
 def feedback(run_id: str):
+    """Save tester feedback for a prompt run."""
     rating = request.form.get("rating")
     if rating not in {"like", "dislike"}:
         rating = None

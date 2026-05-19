@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>ScoutVision Gemini Sandbox</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 960px;
+        margin: 32px auto;
+        line-height: 1.4;
+      }
+      label { display: block; margin-top: 16px; font-weight: 600; }
+      input[type="file"], input[type="text"], textarea {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      textarea {
+        min-height: 150px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      button { margin-top: 16px; padding: 8px 12px; }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: #f5f5f5;
+        padding: 12px;
+      }
+      .error { color: #a40000; font-weight: 600; }
+      .run { border-top: 1px solid #ddd; padding: 10px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>ScoutVision Gemini Sandbox</h1>
+    <form action="{{ url_for('submit') }}" method="post" enctype="multipart/form-data">
+      <label>Highlight reel, max {{ max_minutes }} minutes</label>
+      <input type="file" name="video" accept="video/*" required>
+
+      <label>Coach ask</label>
+      <textarea name="user_prompt" required>{{ default_user_prompt }}</textarea>
+
+      <label>Gemini model</label>
+      <input type="text" name="model" value="{{ default_model }}" required>
+
+      <details>
+        <summary>Boilerplate prompt that will be prepended</summary>
+        <pre>{{ boilerplate }}</pre>
+      </details>
+
+      <button type="submit">Submit</button>
+    </form>
+
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
+
+    <h2>Recent runs</h2>
+    {% for run in runs %}
+      <div class="run">
+        <a href="{{ url_for('result', run_id=run['id']) }}">
+          {{ run['created_at'] }} - {{ run['video_filename'] }}
+        </a>
+        <div>
+          Status: {{ run['status'] }}
+          {% if run['feedback_rating'] %}; feedback: {{ run['feedback_rating'] }}{% endif %}
+        </div>
+      </div>
+    {% else %}
+      <p>No runs yet.</p>
+    {% endfor %}
+  </body>
+</html>

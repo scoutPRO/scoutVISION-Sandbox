@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Prompt Run {{ run['id'] }}</title>
+    {% if run['status'] in ['queued', 'processing'] %}
+      <meta http-equiv="refresh" content="5">
+    {% endif %}
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 960px;
+        margin: 32px auto;
+        line-height: 1.4;
+      }
+      textarea { width: 100%; min-height: 100px; box-sizing: border-box; }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: #f5f5f5;
+        padding: 12px;
+      }
+      .error { color: #a40000; font-weight: 600; }
+      label { display: block; margin-top: 8px; }
+      button { margin-top: 12px; padding: 8px 12px; }
+    </style>
+  </head>
+  <body>
+    <p><a href="{{ url_for('index') }}">Back</a></p>
+    <h1>Prompt Run</h1>
+    <p><strong>Status:</strong> {{ run['status'] }}</p>
+    <p><strong>Video:</strong> {{ run['video_filename'] }}</p>
+    <p>
+      <strong>Duration:</strong>
+      {% if run['video_duration_seconds'] %}
+        {{ "%.1f"|format(run['video_duration_seconds']) }} seconds
+      {% else %}
+        pending
+      {% endif %}
+    </p>
+    <p><strong>Model:</strong> {{ run['model'] }}</p>
+
+    {% if run['status'] == 'queued' %}
+      <p>Queued. This page refreshes automatically.</p>
+    {% elif run['status'] == 'processing' %}
+      <p>Processing with Gemini. This page refreshes automatically.</p>
+    {% endif %}
+
+    {% if run['error'] %}
+      <h2>Error</h2>
+      <p class="error">{{ run['error'] }}</p>
+    {% endif %}
+
+    <h2>Response</h2>
+    <pre>{{ run['parsed_response_json'] or run['response_text'] or 'No response yet.' }}</pre>
+
+    <details>
+      <summary>Full Gemini response JSON</summary>
+      <pre>{{ run['full_response_json'] or '{}' }}</pre>
+    </details>
+
+    <details>
+      <summary>Full prompt sent to Gemini</summary>
+      <pre>{{ run['full_prompt'] }}</pre>
+    </details>
+
+    <h2>Feedback</h2>
+    <form action="{{ url_for('feedback', run_id=run['id']) }}" method="post">
+      <label>
+        <input
+          type="radio"
+          name="rating"
+          value="like"
+          {% if run['feedback_rating'] == 'like' %}checked{% endif %}
+        >
+        Like
+      </label>
+      <label>
+        <input
+          type="radio"
+          name="rating"
+          value="dislike"
+          {% if run['feedback_rating'] == 'dislike' %}checked{% endif %}
+        >
+        Dislike
+      </label>
+      <label>Notes</label>
+      <textarea name="notes">{{ run['feedback_notes'] or '' }}</textarea>
+      <button type="submit">Save feedback</button>
+    </form>
+  </body>
+</html>
