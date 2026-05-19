@@ -26,7 +26,7 @@ def upgrade() -> None:
 
     op.create_table(
         "prompt_runs",
-        sa.Column("id", sa.String(length=32), nullable=False),
+        sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("video_filename", sa.String(length=255), nullable=False),
         sa.Column("stored_video_path", sa.Text(), nullable=False),

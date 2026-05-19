@@ -12,6 +12,7 @@ Small tester site for iterating on Gemini prompts against recruit highlight reel
 - Shows a clean response view plus the full Gemini response JSON.
 - Stores runs, prompts, outputs, like/dislike feedback, and feedback notes in SQLite.
 - Manages the database schema with SQLAlchemy ORM models and Alembic migrations.
+- Exports completed run artifacts to `out/<run_id>/` for easy inspection.
 
 ## Local Setup
 
@@ -31,7 +32,8 @@ poetry run python app.py
 Open `http://127.0.0.1:5055`.
 
 After submitting a video, the app redirects to a run page with status `queued` or `processing`.
-That page refreshes every 5 seconds until the run finishes.
+The upload form shows client-side upload progress, then the run page polls a JSON
+status endpoint for stage updates until Gemini processing finishes.
 
 ## Linting
 
@@ -49,10 +51,13 @@ with `ruff format --check`.
 - `GEMINI_API_KEY`: required.
 - `GEMINI_MODEL`: default `gemini-2.5-pro`.
 - `DATA_DIR`: default `data`.
+- `OUT_DIR`: default `out`.
 - `DATABASE_PATH`: default `data/prompt_lab.sqlite3`.
 - `DATABASE_URL`: optional SQLAlchemy database URL. Defaults to SQLite from `DATABASE_PATH`.
 - `MAX_VIDEO_SECONDS`: default `300`.
 - `MAX_UPLOAD_MB`: default `800`.
+- `KEEP_UPLOADED_VIDEOS`: default `false`; when false, successful run videos are deleted after processing.
+- `KEEP_FAILED_UPLOADS`: default `true`; when true, failed run videos are kept for debugging.
 - `PORT`: used by Railway, default local port `5055`.
 
 ## Database Migrations
@@ -69,6 +74,17 @@ After changing SQLAlchemy models, create a migration with:
 ```bash
 poetry run alembic revision --autogenerate -m "Describe schema change"
 ```
+
+## Output Artifacts
+
+When a run completes, the app writes inspectable files to `out/<run_id>/`:
+
+- `prompt.txt`: full prompt sent to Gemini.
+- `response.json`: displayed response JSON.
+- `gemini_response_full.json`: full Gemini SDK response JSON.
+- `metadata.json`: run metadata such as model, video path, duration, and status.
+
+Run IDs use canonical UUIDs, for example `a35b3b0e-1af6-4260-9da8-b8a642fcc5cb`.
 
 ## Railway Notes
 

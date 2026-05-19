@@ -28,11 +28,31 @@
       }
       .error { color: #a40000; font-weight: 600; }
       .run { border-top: 1px solid #ddd; padding: 10px 0; }
+      .status-panel { margin-top: 16px; }
+      .progress {
+        height: 10px;
+        background: #eee;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .progress-bar {
+        width: 0%;
+        height: 100%;
+        background: #2563eb;
+        transition: width 0.2s ease;
+      }
+      .status-message { margin-top: 6px; color: #444; }
+      .is-hidden { display: none; }
     </style>
   </head>
   <body>
     <h1>ScoutVision Gemini Sandbox</h1>
-    <form action="{{ url_for('submit') }}" method="post" enctype="multipart/form-data">
+    <form
+      id="upload-form"
+      action="{{ url_for('submit') }}"
+      method="post"
+      enctype="multipart/form-data"
+    >
       <label>Highlight reel, max {{ max_minutes }} minutes</label>
       <input type="file" name="video" accept="video/*" required>
 
@@ -49,6 +69,12 @@
 
       <button type="submit">Submit</button>
     </form>
+    <div id="upload-status" class="status-panel is-hidden">
+      <div class="progress">
+        <div id="upload-progress-bar" class="progress-bar"></div>
+      </div>
+      <div id="upload-status-message" class="status-message">Preparing upload.</div>
+    </div>
 
     {% if error %}
       <p class="error">{{ error }}</p>
@@ -56,7 +82,8 @@
 
     <h2>Recent runs</h2>
     {% for run in runs %}
-      <div class="run">
+      {% set status = run_statuses[run.id] %}
+      <div class="run" data-run-id="{{ run.id }}" data-terminal="{{ status.is_terminal }}">
         <a href="{{ url_for('result', run_id=run['id']) }}">
           {{ run['created_at'] }} - {{ run['video_filename'] }}
         </a>
@@ -64,9 +91,88 @@
           Status: {{ run['status'] }}
           {% if run['feedback_rating'] %}; feedback: {{ run['feedback_rating'] }}{% endif %}
         </div>
+        <div class="status-panel">
+          <div class="progress">
+            <div
+              class="progress-bar"
+              style="width: {{ status.progress_percent }}%;"
+            ></div>
+          </div>
+          <div class="status-message">{{ status.message }}</div>
+        </div>
       </div>
     {% else %}
       <p>No runs yet.</p>
     {% endfor %}
+    <script>
+      const uploadForm = document.querySelector("#upload-form");
+      const uploadStatus = document.querySelector("#upload-status");
+      const uploadBar = document.querySelector("#upload-progress-bar");
+      const uploadMessage = document.querySelector("#upload-status-message");
+
+      function setUploadStatus(message, percent) {
+        uploadStatus.classList.remove("is-hidden");
+        uploadBar.style.width = `${percent}%`;
+        uploadMessage.textContent = message;
+      }
+
+      uploadForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const request = new XMLHttpRequest();
+        request.open("POST", uploadForm.action);
+        request.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+
+        request.upload.addEventListener("progress", (uploadEvent) => {
+          if (!uploadEvent.lengthComputable) {
+            setUploadStatus("Uploading video.", 15);
+            return;
+          }
+          const percent = Math.max(
+            5,
+            Math.min(95, Math.round((uploadEvent.loaded / uploadEvent.total) * 100)),
+          );
+          setUploadStatus("Uploading video.", percent);
+        });
+
+        request.addEventListener("load", () => {
+          if (request.status >= 200 && request.status < 300) {
+            setUploadStatus("Upload complete. Opening run status.", 100);
+            const data = JSON.parse(request.responseText);
+            window.location.href = data.redirect_url;
+            return;
+          }
+          const data = JSON.parse(request.responseText || "{}");
+          setUploadStatus(data.error || "Upload failed. Please try again.", 100);
+        });
+
+        request.addEventListener("error", () => {
+          setUploadStatus("Upload failed. Please try again.", 100);
+        });
+
+        setUploadStatus("Starting upload.", 5);
+        request.send(new FormData(uploadForm));
+      });
+
+      function updateRunStatus(runElement, data) {
+        const bar = runElement.querySelector(".progress-bar");
+        const message = runElement.querySelector(".status-message");
+        bar.style.width = `${data.progress_percent}%`;
+        message.textContent = data.message;
+        runElement.dataset.terminal = data.is_terminal;
+      }
+
+      function pollRun(runElement) {
+        fetch(`/runs/${runElement.dataset.runId}/status`)
+          .then((response) => response.json())
+          .then((data) => {
+            updateRunStatus(runElement, data);
+            if (!data.is_terminal) {
+              window.setTimeout(() => pollRun(runElement), 2000);
+            }
+          });
+      }
+
+      document.querySelectorAll(".run[data-terminal='False']").forEach(pollRun);
+    </script>
   </body>
 </html>

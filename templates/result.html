@@ -3,9 +3,6 @@
   <head>
     <meta charset="utf-8">
     <title>Prompt Run {{ run['id'] }}</title>
-    {% if run['status'] in ['queued', 'processing'] %}
-      <meta http-equiv="refresh" content="5">
-    {% endif %}
     <style>
       body {
         font-family: system-ui, sans-serif;
@@ -23,6 +20,19 @@
       .error { color: #a40000; font-weight: 600; }
       label { display: block; margin-top: 8px; }
       button { margin-top: 12px; padding: 8px 12px; }
+      .status-panel { margin: 16px 0; }
+      .progress {
+        height: 10px;
+        background: #eee;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .progress-bar {
+        height: 100%;
+        background: #2563eb;
+        transition: width 0.2s ease;
+      }
+      .status-message { margin-top: 6px; color: #444; }
     </style>
   </head>
   <body>
@@ -32,19 +42,31 @@
     <p><strong>Video:</strong> {{ run['video_filename'] }}</p>
     <p>
       <strong>Duration:</strong>
-      {% if run['video_duration_seconds'] %}
-        {{ "%.1f"|format(run['video_duration_seconds']) }} seconds
-      {% else %}
-        pending
-      {% endif %}
+      <span id="video-duration">
+        {% if run['video_duration_seconds'] %}
+          {{ "%.1f"|format(run['video_duration_seconds']) }} seconds
+        {% else %}
+          pending
+        {% endif %}
+      </span>
     </p>
     <p><strong>Model:</strong> {{ run['model'] }}</p>
 
-    {% if run['status'] == 'queued' %}
-      <p>Queued. This page refreshes automatically.</p>
-    {% elif run['status'] == 'processing' %}
-      <p>Processing with Gemini. This page refreshes automatically.</p>
-    {% endif %}
+    <div
+      id="run-status"
+      class="status-panel"
+      data-run-id="{{ run.id }}"
+      data-terminal="{{ run_status.is_terminal }}"
+    >
+      <div class="progress">
+        <div
+          id="run-progress-bar"
+          class="progress-bar"
+          style="width: {{ run_status.progress_percent }}%;"
+        ></div>
+      </div>
+      <div id="run-status-message" class="status-message">{{ run_status.message }}</div>
+    </div>
 
     {% if run['error'] %}
       <h2>Error</h2>
@@ -88,5 +110,43 @@
       <textarea name="notes">{{ run['feedback_notes'] or '' }}</textarea>
       <button type="submit">Save feedback</button>
     </form>
+    <script>
+      const runStatus = document.querySelector("#run-status");
+      const progressBar = document.querySelector("#run-progress-bar");
+      const statusMessage = document.querySelector("#run-status-message");
+      const videoDuration = document.querySelector("#video-duration");
+      const initialTerminal = runStatus.dataset.terminal === "True";
+
+      function formatDuration(seconds) {
+        if (seconds === null || seconds === undefined) {
+          return "pending";
+        }
+        return `${Number(seconds).toFixed(1)} seconds`;
+      }
+
+      function updateStatus(data) {
+        progressBar.style.width = `${data.progress_percent}%`;
+        statusMessage.textContent = data.message;
+        videoDuration.textContent = formatDuration(data.video_duration_seconds);
+        runStatus.dataset.terminal = data.is_terminal;
+      }
+
+      function pollStatus() {
+        fetch(`/runs/${runStatus.dataset.runId}/status`)
+          .then((response) => response.json())
+          .then((data) => {
+            updateStatus(data);
+            if (data.is_terminal) {
+              window.location.reload();
+              return;
+            }
+            window.setTimeout(pollStatus, 2000);
+          });
+      }
+
+      if (!initialTerminal) {
+        window.setTimeout(pollStatus, 2000);
+      }
+    </script>
   </body>
 </html>

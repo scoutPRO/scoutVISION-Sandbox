@@ -4,26 +4,26 @@ This is a small beta tester app for iterating on Gemini prompts against
 recruit highlight reels.
 """
 
-import json
 import os
 import threading
-import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
-import cv2
-from flask import Flask, redirect, render_template, request, url_for
-from google import genai
-from google.genai import types
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 from werkzeug.utils import secure_filename
 
-from database import SessionLocal, ensure_storage
+from database import ensure_storage
+from lib.artifacts import export_run_artifacts
+from lib.gemini_client import call_gemini
+from lib.progress import run_status_payload, set_progress
+from lib.prompt_runs import create_run, find_run, recent_runs, update_run
+from lib.video import allowed_video, delete_video, get_video_duration
 from models import PromptRun
 from settings import (
-    ALLOWED_EXTENSIONS,
     DEFAULT_MODEL,
+    KEEP_FAILED_UPLOADS,
+    KEEP_UPLOADED_VIDEOS,
     MAX_UPLOAD_MB,
     MAX_VIDEO_SECONDS,
     PROMPT_PATH,
@@ -46,144 +46,55 @@ def load_boilerplate_prompt() -> str:
     return PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
-def allowed_video(filename: str) -> bool:
-    """Return whether the uploaded filename has a supported video extension."""
-    return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
-
-
-def get_video_duration(path: Path) -> float:
-    """Return the duration of a video file in seconds."""
-    cap = cv2.VideoCapture(str(path))
-    if not cap.isOpened():
-        raise RuntimeError("Could not open uploaded video.")
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    cap.release()
-    if not fps or not frame_count:
-        raise RuntimeError("Could not determine video duration.")
-    return float(frame_count / fps)
-
-
-def to_jsonable(value: Any) -> Any:
-    """Convert a Gemini SDK response object into JSON-serializable data."""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, list):
-        return [to_jsonable(item) for item in value]
-    if isinstance(value, tuple):
-        return [to_jsonable(item) for item in value]
-    if isinstance(value, dict):
-        return {str(key): to_jsonable(item) for key, item in value.items()}
-    if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json", exclude_none=True)
-    if hasattr(value, "to_json_dict"):
-        return value.to_json_dict()
-    return str(value)
-
-
-def wait_for_active(client: Any, uploaded_file: Any, max_wait_seconds: int = 180) -> Any:
-    """Poll Gemini until an uploaded file is active or fails to become active."""
-    start = time.time()
-    while getattr(getattr(uploaded_file, "state", None), "name", None) == "PROCESSING":
-        if time.time() - start > max_wait_seconds:
-            raise RuntimeError("Gemini file ingestion timed out.")
-        time.sleep(2)
-        uploaded_file = client.files.get(name=uploaded_file.name)
-
-    state_name = getattr(getattr(uploaded_file, "state", None), "name", None)
-    if state_name and state_name != "ACTIVE":
-        raise RuntimeError(f"Gemini file did not become active. State: {state_name}")
-    return uploaded_file
-
-
-def call_gemini(video_path: Path, prompt: str, model: str) -> tuple[str, str, str]:
-    """Upload a video to Gemini and return display, parsed, and raw responses."""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is required.")
-
-    client = genai.Client(api_key=api_key)
-    uploaded_file = wait_for_active(client, client.files.upload(file=str(video_path)))
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_uri(
-                        file_uri=uploaded_file.uri,
-                        mime_type=uploaded_file.mime_type,
-                    ),
-                    types.Part.from_text(text=prompt),
-                ],
-            )
-        ],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0,
-            top_p=0.1,
-            candidate_count=1,
-        ),
-    )
-
-    response_text = response.text or ""
-    try:
-        parsed_response_json = json.dumps(json.loads(response_text), indent=2)
-    except json.JSONDecodeError:
-        parsed_response_json = response_text
-    full_response_json = json.dumps(to_jsonable(response), indent=2, sort_keys=True)
-    return response_text, parsed_response_json, full_response_json
-
-
-def recent_runs() -> list[PromptRun]:
-    """Return recent prompt runs for the index page."""
-    with SessionLocal() as session:
-        return session.query(PromptRun).order_by(PromptRun.created_at.desc()).limit(50).all()
-
-
-def find_run(run_id: str) -> PromptRun | None:
-    """Return one prompt run by ID, or None when it does not exist."""
-    with SessionLocal() as session:
-        return session.get(PromptRun, run_id)
-
-
-def update_run(run_id: str, **fields: Any) -> None:
-    """Update selected columns for a prompt run."""
-    if not fields:
-        return
-    with SessionLocal() as session:
-        run = session.get(PromptRun, run_id)
-        if run is None:
-            return
-        for field, value in fields.items():
-            setattr(run, field, value)
-        session.commit()
+def wants_json_response() -> bool:
+    """Return whether the current request expects a JSON response."""
+    return request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
 
 def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
     """Process one queued run and persist the Gemini result or failure."""
     update_run(run_id, status="processing", error=None)
+    set_progress(run_id, "validating_video", "Checking video duration.", 15)
+    video_path = Path(stored_path)
     try:
-        video_path = Path(stored_path)
         duration = get_video_duration(video_path)
         if duration > MAX_VIDEO_SECONDS:
             raise RuntimeError(
                 f"Video is {duration:.1f} seconds; max is {MAX_VIDEO_SECONDS} seconds."
             )
+        update_run(run_id, video_duration_seconds=duration)
+        set_progress(run_id, "video_ready", "Video validated and ready for Gemini.", 25)
         response_text, parsed_response_json, full_response_json = call_gemini(
-            video_path, full_prompt, model
+            video_path,
+            full_prompt,
+            model,
+            progress_callback=lambda stage, message, percent: set_progress(
+                run_id,
+                stage,
+                message,
+                percent,
+            ),
         )
         update_run(
             run_id,
-            video_duration_seconds=duration,
             response_text=response_text,
             parsed_response_json=parsed_response_json,
             full_response_json=full_response_json,
             status="completed",
             error=None,
         )
+        completed_run = find_run(run_id)
+        if completed_run is not None:
+            export_run_artifacts(completed_run)
+        set_progress(run_id, "completed", "Gemini response is ready.", 100)
     except Exception as exc:
         update_run(run_id, status="failed", error=str(exc))
+        set_progress(run_id, "failed", str(exc), 100)
+        if not KEEP_UPLOADED_VIDEOS and not KEEP_FAILED_UPLOADS:
+            delete_video(video_path)
+    else:
+        if not KEEP_UPLOADED_VIDEOS:
+            delete_video(video_path)
 
 
 def start_background_run(
@@ -216,6 +127,7 @@ def health() -> dict[str, str]:
 @app.get("/")
 def index():
     """Render the upload form and recent prompt runs."""
+    runs = recent_runs()
     return render_template(
         "index.html",
         boilerplate=load_boilerplate_prompt(),
@@ -223,7 +135,8 @@ def index():
         default_user_prompt=DEFAULT_USER_PROMPT,
         error=request.args.get("error"),
         max_minutes=MAX_VIDEO_SECONDS // 60,
-        runs=recent_runs(),
+        run_statuses={run.id: run_status_payload(run) for run in runs},
+        runs=runs,
     )
 
 
@@ -232,11 +145,15 @@ def submit():
     """Create a queued prompt run and start background processing."""
     video = request.files.get("video")
     if not video or not video.filename:
+        if wants_json_response():
+            return jsonify({"error": "Upload a video file."}), 400
         return redirect(url_for("index", error="Upload a video file."))
     if not allowed_video(video.filename):
+        if wants_json_response():
+            return jsonify({"error": "Unsupported video file type."}), 400
         return redirect(url_for("index", error="Unsupported video file type."))
 
-    run_id = uuid.uuid4().hex
+    run_id = str(uuid.uuid4())
     safe_name = secure_filename(video.filename)
     stored_path = UPLOAD_DIR / f"{run_id}_{safe_name}"
     video.save(stored_path)
@@ -246,23 +163,24 @@ def submit():
     boilerplate_prompt = load_boilerplate_prompt()
     full_prompt = f"{boilerplate_prompt}\n\nUSER REQUEST:\n{user_prompt}"
 
-    with SessionLocal() as session:
-        session.add(
-            PromptRun(
-                id=run_id,
-                created_at=datetime.now(UTC),
-                video_filename=video.filename,
-                stored_video_path=str(stored_path),
-                model=model,
-                boilerplate_prompt=boilerplate_prompt,
-                user_prompt=user_prompt,
-                full_prompt=full_prompt,
-                status="queued",
-            )
+    create_run(
+        PromptRun(
+            id=run_id,
+            created_at=datetime.now(UTC),
+            video_filename=video.filename,
+            stored_video_path=str(stored_path),
+            model=model,
+            boilerplate_prompt=boilerplate_prompt,
+            user_prompt=user_prompt,
+            full_prompt=full_prompt,
+            status="queued",
         )
-        session.commit()
+    )
 
+    set_progress(run_id, "queued", "Upload complete. Queued for processing.", 5)
     start_background_run(run_id, stored_path, full_prompt, model)
+    if wants_json_response():
+        return jsonify({"redirect_url": url_for("result", run_id=run_id)})
     return redirect(url_for("result", run_id=run_id))
 
 
@@ -272,7 +190,16 @@ def result(run_id: str):
     run = find_run(run_id)
     if run is None:
         return redirect(url_for("index", error="Run not found."))
-    return render_template("result.html", run=run)
+    return render_template("result.html", run=run, run_status=run_status_payload(run))
+
+
+@app.get("/runs/<run_id>/status")
+def run_status(run_id: str):
+    """Return live status details for one prompt run."""
+    run = find_run(run_id)
+    if run is None:
+        return jsonify({"error": "Run not found."}), 404
+    return jsonify(run_status_payload(run))
 
 
 @app.post("/runs/<run_id>/feedback")

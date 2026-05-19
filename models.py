@@ -13,7 +13,7 @@ class PromptRun(Base):
 
     __tablename__ = "prompt_runs"
 
-    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     video_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     stored_video_path: Mapped[str] = mapped_column(Text, nullable=False)

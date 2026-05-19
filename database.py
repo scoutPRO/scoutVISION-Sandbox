@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from alembic import command
-from settings import BASE_DIR, DATA_DIR, DATABASE_URL, UPLOAD_DIR
+from settings import BASE_DIR, DATA_DIR, DATABASE_URL, OUT_DIR, UPLOAD_DIR
 
 
 class Base(DeclarativeBase):
@@ -43,6 +43,7 @@ def ensure_storage() -> None:
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
         if DATABASE_URL.startswith("sqlite:///"):
             sqlite_path = Path(DATABASE_URL.removeprefix("sqlite:///"))
             sqlite_path.parent.mkdir(parents=True, exist_ok=True)
