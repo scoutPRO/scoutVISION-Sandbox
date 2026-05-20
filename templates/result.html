@@ -47,6 +47,9 @@
     <div class="topbar">
       <p><a href="{{ url_for('index') }}">Back</a></p>
       <form class="logout-form" action="{{ url_for('logout') }}" method="post">
+        {% if current_user.role == "admin" %}
+          <a href="{{ url_for('admin_users') }}">Users</a>
+        {% endif %}
         <span>{{ current_user.name }} ({{ current_user.role }})</span>
         <button type="submit">Logout</button>
       </form>
@@ -54,6 +57,16 @@
     <h1>Prompt Run</h1>
     <p><strong>Status:</strong> {{ run['status'] }}</p>
     <p><strong>Video:</strong> {{ run['video_filename'] }}</p>
+    {% if current_user.role == "admin" %}
+      <p>
+        <strong>User:</strong>
+        {% if run.user %}
+          {{ run.user.name }} ({{ run.user.email }})
+        {% else %}
+          unknown
+        {% endif %}
+      </p>
+    {% endif %}
     <p>
       <strong>Duration:</strong>
       <span id="video-duration">

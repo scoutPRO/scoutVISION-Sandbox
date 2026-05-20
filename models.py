@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 
@@ -30,6 +30,7 @@ class PromptRun(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
+    user: Mapped[User | None] = relationship()
     video_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     stored_video_path: Mapped[str] = mapped_column(Text, nullable=False)
     video_duration_seconds: Mapped[float | None] = mapped_column(Float)

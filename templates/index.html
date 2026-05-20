@@ -57,6 +57,9 @@
     <div class="topbar">
       <h1>ScoutVision Gemini Sandbox</h1>
       <form class="logout-form" action="{{ url_for('logout') }}" method="post">
+        {% if current_user.role == "admin" %}
+          <a href="{{ url_for('admin_users') }}">Users</a>
+        {% endif %}
         <span>{{ current_user.name }} ({{ current_user.role }})</span>
         <button type="submit">Logout</button>
       </form>
@@ -105,6 +108,16 @@
           Status: {{ run['status'] }}
           {% if run['feedback_rating'] %}; feedback: {{ run['feedback_rating'] }}{% endif %}
         </div>
+        {% if current_user.role == "admin" %}
+          <div>
+            User:
+            {% if run.user %}
+              {{ run.user.name }} ({{ run.user.email }})
+            {% else %}
+              unknown
+            {% endif %}
+          </div>
+        {% endif %}
         <div class="status-panel">
           <div class="progress">
             <div

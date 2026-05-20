@@ -16,6 +16,7 @@ from werkzeug.utils import secure_filename
 from database import ensure_storage
 from lib.artifacts import export_run_artifacts
 from lib.auth import (
+    admin_required,
     authenticate_user,
     bootstrap_admin_user,
     create_user,
@@ -28,6 +29,7 @@ from lib.auth import (
 from lib.gemini_client import call_gemini
 from lib.progress import run_status_payload, set_progress
 from lib.prompt_runs import create_run, find_run, recent_runs, update_run
+from lib.users import list_users
 from lib.video import allowed_video, delete_video, get_video_duration
 from models import PromptRun
 from settings import (
@@ -223,6 +225,17 @@ def logout():
     """Log out the current user."""
     logout_user()
     return redirect(url_for("login"))
+
+
+@app.get("/admin/users")
+@admin_required
+def admin_users():
+    """Render an admin-only user list."""
+    return render_template(
+        "admin_users.html",
+        current_user=current_user(),
+        users=list_users(),
+    )
 
 
 @app.post("/submit")

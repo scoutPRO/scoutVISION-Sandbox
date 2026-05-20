@@ -123,3 +123,22 @@ def login_required(route_handler: Any) -> Any:
         return redirect(url_for("login", next=request.full_path))
 
     return wrapper
+
+
+def admin_required(route_handler: Any) -> Any:
+    """Require an admin user before calling a route handler."""
+
+    @wraps(route_handler)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        user = current_user()
+        if is_admin(user):
+            return route_handler(*args, **kwargs)
+        if user is None:
+            if wants_json_response():
+                return jsonify({"error": "Login required."}), 401
+            return redirect(url_for("login", next=request.full_path))
+        if wants_json_response():
+            return jsonify({"error": "Admin access required."}), 403
+        return redirect(url_for("index", error="Admin access required."))
+
+    return wrapper
