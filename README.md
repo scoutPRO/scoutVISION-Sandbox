@@ -7,6 +7,8 @@ Small tester site for iterating on Gemini prompts against recruit highlight reel
 - Upload one highlight reel, limited to 5 minutes by default.
 - Prepends a fixed coach/recruit analysis boilerplate prompt.
 - Lets testers edit only the user-facing coach ask.
+- Requires users to log in before submitting or viewing runs.
+- Lets beta testers create their own non-admin accounts when signup is enabled.
 - Sends the video and composed prompt to Gemini.
 - Runs Gemini processing in a lightweight Flask background thread so uploads return quickly.
 - Shows a clean response view plus the full Gemini response JSON.
@@ -23,7 +25,8 @@ poetry run pre-commit install
 cp .env.example .env
 ```
 
-Set `GEMINI_API_KEY` in `.env`, then run:
+Set `GEMINI_API_KEY`, `SECRET_KEY`, and the bootstrap admin credentials in `.env`,
+then run:
 
 ```bash
 poetry run python app.py
@@ -50,6 +53,11 @@ with `ruff format --check`.
 
 - `GEMINI_API_KEY`: required.
 - `GEMINI_MODEL`: default `gemini-2.5-pro`.
+- `SECRET_KEY`: required outside local development.
+- `BOOTSTRAP_ADMIN_EMAIL`: creates this admin user on startup when set.
+- `BOOTSTRAP_ADMIN_PASSWORD`: password for the bootstrap admin user.
+- `BOOTSTRAP_ADMIN_NAME`: default `Admin`.
+- `ALLOW_SIGNUP`: default `true`; when true, visitors can create tester accounts.
 - `DATA_DIR`: default `data`.
 - `OUT_DIR`: default `out`.
 - `DATABASE_PATH`: default `data/prompt_lab.sqlite3`.

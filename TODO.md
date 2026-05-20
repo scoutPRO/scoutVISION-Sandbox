@@ -2,10 +2,10 @@
 
 ## V1 This Week
 
-- Add simple email/password auth with Flask sessions.
-- Add user model and associate prompt runs with users.
-- Add admin role for viewing all runs and managing users.
-- Add create-user or invite flow for early testers.
+- Add simple email/password auth with Flask sessions. [done in first pass]
+- Add user model and associate prompt runs with users. [done in first pass]
+- Add admin role for viewing all runs and managing users. [partial: admin can view all runs]
+- Add create-user or invite flow for early testers. [partial: open tester signup exists]
 - Add logout and current-user display.
 - Scope normal users to their own runs.
 - Keep admin able to view all runs.

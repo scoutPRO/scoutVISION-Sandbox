@@ -15,18 +15,30 @@ from werkzeug.utils import secure_filename
 
 from database import ensure_storage
 from lib.artifacts import export_run_artifacts
+from lib.auth import (
+    authenticate_user,
+    bootstrap_admin_user,
+    create_user,
+    current_user,
+    login_required,
+    login_user,
+    logout_user,
+    wants_json_response,
+)
 from lib.gemini_client import call_gemini
 from lib.progress import run_status_payload, set_progress
 from lib.prompt_runs import create_run, find_run, recent_runs, update_run
 from lib.video import allowed_video, delete_video, get_video_duration
 from models import PromptRun
 from settings import (
+    ALLOW_SIGNUP,
     DEFAULT_MODEL,
     KEEP_FAILED_UPLOADS,
     KEEP_UPLOADED_VIDEOS,
     MAX_UPLOAD_MB,
     MAX_VIDEO_SECONDS,
     PROMPT_PATH,
+    SECRET_KEY,
     UPLOAD_DIR,
 )
 
@@ -34,6 +46,7 @@ DEFAULT_USER_PROMPT = "Identify what a coach should notice first about this recr
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+app.secret_key = SECRET_KEY
 
 
 def init_db() -> None:
@@ -44,11 +57,6 @@ def init_db() -> None:
 def load_boilerplate_prompt() -> str:
     """Load the coach-facing boilerplate prompt from disk."""
     return PROMPT_PATH.read_text(encoding="utf-8").strip()
-
-
-def wants_json_response() -> bool:
-    """Return whether the current request expects a JSON response."""
-    return request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
 
 def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
@@ -116,6 +124,7 @@ def start_background_run(
 def ensure_db() -> None:
     """Ensure local storage exists before handling a request."""
     init_db()
+    bootstrap_admin_user()
 
 
 @app.get("/health")
@@ -125,12 +134,15 @@ def health() -> dict[str, str]:
 
 
 @app.get("/")
+@login_required
 def index():
     """Render the upload form and recent prompt runs."""
-    runs = recent_runs()
+    user = current_user()
+    runs = recent_runs(user)
     return render_template(
         "index.html",
         boilerplate=load_boilerplate_prompt(),
+        current_user=user,
         default_model=DEFAULT_MODEL,
         default_user_prompt=DEFAULT_USER_PROMPT,
         error=request.args.get("error"),
@@ -140,9 +152,84 @@ def index():
     )
 
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """Log in a user with email and password."""
+    if current_user() is not None:
+        return redirect(url_for("index"))
+
+    error = None
+    next_url = request.values.get("next") or url_for("index")
+    if not next_url.startswith("/") or next_url.startswith("//"):
+        next_url = url_for("index")
+
+    if request.method == "POST":
+        email = request.form.get("email", "")
+        password = request.form.get("password", "")
+        user = authenticate_user(email, password)
+        if user is None:
+            error = "Invalid email or password."
+        else:
+            login_user(user)
+            return redirect(next_url)
+
+    return render_template(
+        "login.html",
+        allow_signup=ALLOW_SIGNUP,
+        error=error,
+        next_url=next_url,
+    )
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    """Create a tester account and log in."""
+    if not ALLOW_SIGNUP:
+        return redirect(url_for("login"))
+    if current_user() is not None:
+        return redirect(url_for("index"))
+
+    error = None
+    if request.method == "POST":
+        email = request.form.get("email", "")
+        name = request.form.get("name", "")
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if len(password) < 8:
+            error = "Password must be at least 8 characters."
+        elif password != confirm_password:
+            error = "Passwords do not match."
+        else:
+            try:
+                user = create_user(
+                    email=email,
+                    name=name,
+                    password=password,
+                    role="tester",
+                )
+            except ValueError as exc:
+                error = str(exc)
+            else:
+                login_user(user)
+                return redirect(url_for("index"))
+
+    return render_template("signup.html", error=error)
+
+
+@app.post("/logout")
+@login_required
+def logout():
+    """Log out the current user."""
+    logout_user()
+    return redirect(url_for("login"))
+
+
 @app.post("/submit")
+@login_required
 def submit():
     """Create a queued prompt run and start background processing."""
+    user = current_user()
     video = request.files.get("video")
     if not video or not video.filename:
         if wants_json_response():
@@ -167,6 +254,7 @@ def submit():
         PromptRun(
             id=run_id,
             created_at=datetime.now(UTC),
+            user_id=user.id,
             video_filename=video.filename,
             stored_video_path=str(stored_path),
             model=model,
@@ -185,26 +273,38 @@ def submit():
 
 
 @app.get("/runs/<run_id>")
+@login_required
 def result(run_id: str):
     """Render one prompt run, including status, response, and feedback form."""
-    run = find_run(run_id)
+    user = current_user()
+    run = find_run(run_id, user)
     if run is None:
         return redirect(url_for("index", error="Run not found."))
-    return render_template("result.html", run=run, run_status=run_status_payload(run))
+    return render_template(
+        "result.html",
+        current_user=user,
+        run=run,
+        run_status=run_status_payload(run),
+    )
 
 
 @app.get("/runs/<run_id>/status")
+@login_required
 def run_status(run_id: str):
     """Return live status details for one prompt run."""
-    run = find_run(run_id)
+    run = find_run(run_id, current_user())
     if run is None:
         return jsonify({"error": "Run not found."}), 404
     return jsonify(run_status_payload(run))
 
 
 @app.post("/runs/<run_id>/feedback")
+@login_required
 def feedback(run_id: str):
     """Save tester feedback for a prompt run."""
+    run = find_run(run_id, current_user())
+    if run is None:
+        return redirect(url_for("index", error="Run not found."))
     rating = request.form.get("rating")
     if rating not in {"like", "dislike"}:
         rating = None

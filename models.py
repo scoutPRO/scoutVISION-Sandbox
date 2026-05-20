@@ -2,10 +2,24 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
+
+
+class User(Base):
+    """A user who can submit and review Gemini prompt runs."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="tester")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
 
 class PromptRun(Base):
@@ -15,6 +29,7 @@ class PromptRun(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
     video_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     stored_video_path: Mapped[str] = mapped_column(Text, nullable=False)
     video_duration_seconds: Mapped[float | None] = mapped_column(Float)
