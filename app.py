@@ -4,6 +4,7 @@ This is a small beta tester app for iterating on Gemini prompts against
 recruit highlight reels.
 """
 
+import json
 import os
 import threading
 import uuid
@@ -35,10 +36,12 @@ from models import PromptRun
 from settings import (
     ALLOW_SIGNUP,
     DEFAULT_MODEL,
+    GEMINI_MODELS,
     KEEP_FAILED_UPLOADS,
     KEEP_UPLOADED_VIDEOS,
     MAX_UPLOAD_MB,
     MAX_VIDEO_SECONDS,
+    OUT_DIR,
     PROMPT_PATH,
     SECRET_KEY,
     UPLOAD_DIR,
@@ -59,6 +62,16 @@ def init_db() -> None:
 def load_boilerplate_prompt() -> str:
     """Load the coach-facing boilerplate prompt from disk."""
     return PROMPT_PATH.read_text(encoding="utf-8").strip()
+
+
+def parse_response_json(response_json: str | None) -> dict | list | None:
+    """Parse the stored Gemini response JSON for structured display."""
+    if not response_json:
+        return None
+    try:
+        return json.loads(response_json)
+    except json.JSONDecodeError:
+        return None
 
 
 def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
@@ -148,6 +161,7 @@ def index():
         default_model=DEFAULT_MODEL,
         default_user_prompt=DEFAULT_USER_PROMPT,
         error=request.args.get("error"),
+        gemini_models=GEMINI_MODELS,
         max_minutes=MAX_VIDEO_SECONDS // 60,
         run_statuses={run.id: run_status_payload(run) for run in runs},
         runs=runs,
@@ -260,6 +274,12 @@ def submit():
 
     user_prompt = request.form.get("user_prompt", "").strip()
     model = request.form.get("model", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    if model not in GEMINI_MODELS:
+        error = "Choose one of the available Gemini models."
+        if wants_json_response():
+            return jsonify({"error": error}), 400
+        return redirect(url_for("index", error=error))
+
     boilerplate_prompt = load_boilerplate_prompt()
     full_prompt = f"{boilerplate_prompt}\n\nUSER REQUEST:\n{user_prompt}"
 
@@ -295,7 +315,9 @@ def result(run_id: str):
         return redirect(url_for("index", error="Run not found."))
     return render_template(
         "result.html",
+        artifact_path=str(OUT_DIR / run.id) if run.status == "completed" else None,
         current_user=user,
+        response_data=parse_response_json(run.parsed_response_json),
         run=run,
         run_status=run_status_payload(run),
     )

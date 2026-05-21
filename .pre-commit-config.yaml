@@ -11,3 +11,9 @@ repos:
         entry: poetry run ruff format --check
         language: system
         types_or: [python, pyi]
+      - id: djlint
+        name: djlint
+        entry: poetry run djlint templates --check --lint
+        language: system
+        pass_filenames: false
+        types: [html]

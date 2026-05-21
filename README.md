@@ -52,7 +52,7 @@ with `ruff format --check`.
 ## Environment Variables
 
 - `GEMINI_API_KEY`: required.
-- `GEMINI_MODEL`: default `gemini-2.5-pro`.
+- `GEMINI_MODEL`: default `models/gemini-2.5-pro`; must match one of the backend model options.
 - `SECRET_KEY`: required outside local development.
 - `BOOTSTRAP_ADMIN_EMAIL`: creates this admin user on startup when set.
 - `BOOTSTRAP_ADMIN_PASSWORD`: password for the bootstrap admin user.

@@ -16,6 +16,13 @@ def env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def normalize_gemini_model(model_name: str) -> str:
+    """Return a Gemini model name using the Google API model prefix."""
+    if model_name.startswith("models/"):
+        return model_name
+    return f"models/{model_name}"
+
+
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
@@ -25,7 +32,26 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
 PROMPT_PATH = Path(os.getenv("BOILERPLATE_PROMPT_PATH", BASE_DIR / "prompts/boilerplate.txt"))
 MAX_VIDEO_SECONDS = int(os.getenv("MAX_VIDEO_SECONDS", "300"))
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "800"))
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+GEMINI_MODELS = {
+    "models/gemini-3-flash-preview": {
+        "description": (
+            "Fast, low-cost, good for prototyping and bulk jobs. Multimodal (video/text)"
+        ),
+        "cost": "$",
+        "default": False,
+    },
+    "models/gemini-2.5-flash": {
+        "description": "Mid-size, fast multimodal model (video/text), supports up to 1M tokens.",
+        "cost": "$$",
+        "default": False,
+    },
+    "models/gemini-2.5-pro": {
+        "description": "High-accuracy, stable multimodal model (video/text), released June 2025.",
+        "cost": "$$$",
+        "default": True,
+    },
+}
+DEFAULT_MODEL = normalize_gemini_model(os.getenv("GEMINI_MODEL", "models/gemini-2.5-pro"))
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".webm", ".mkv"}
 KEEP_UPLOADED_VIDEOS = env_bool("KEEP_UPLOADED_VIDEOS", False)
 KEEP_FAILED_UPLOADS = env_bool("KEEP_FAILED_UPLOADS", True)
