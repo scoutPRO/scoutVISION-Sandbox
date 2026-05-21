@@ -48,6 +48,87 @@ from settings import (
 )
 
 DEFAULT_USER_PROMPT = "Identify what a coach should notice first about this recruit."
+OUTPUT_MODES = {
+    "general": {
+        "label": "General Review",
+        "instruction": (
+            "Provide a balanced coach-facing review with summary, strengths, concerns, "
+            "notable moments, follow-up questions, and fit signals.\n\n"
+            "Return JSON with this shape:\n"
+            "{\n"
+            '  "summary": "short coach-facing summary",\n'
+            '  "strengths": ["specific strengths visible in the reel"],\n'
+            '  "concerns_or_unknowns": ['
+            '"limitations, unclear signals, or things the video does not prove"'
+            "],\n"
+            '  "notable_moments": [\n'
+            "    {\n"
+            '      "timestamp": "mm:ss",\n'
+            '      "observation": "what happened",\n'
+            '      "why_it_matters": "why a coach might care"\n'
+            "    }\n"
+            "  ],\n"
+            '  "coach_follow_up_questions": ["questions the coach should ask or verify"],\n'
+            '  "fit_signals": ['
+            '"signals related to role, athletic traits, decision making, effort, or coachability"'
+            "]\n"
+            "}"
+        ),
+    },
+    "swot": {
+        "label": "SWOT",
+        "instruction": (
+            "Frame the response as a SWOT review: strengths, weaknesses, opportunities, "
+            "and threats or risks. Use only evidence visible in the video.\n\n"
+            "Return JSON with this shape:\n"
+            "{\n"
+            '  "summary": "short coach-facing SWOT summary",\n'
+            '  "strengths": ["visible strengths or advantages"],\n'
+            '  "weaknesses": ["visible limitations or underdeveloped areas"],\n'
+            '  "opportunities": ["ways the player could be used, developed, or evaluated"],\n'
+            '  "threats": ["risks, unknowns, or reasons to request more evidence"],\n'
+            '  "coach_follow_up_questions": ["questions to ask after watching the reel"]\n'
+            "}"
+        ),
+    },
+    "position_fit": {
+        "label": "Position Fit",
+        "instruction": (
+            "Focus on position fit, likely role, transferable skills, and what additional "
+            "film a coach would need before making a roster decision.\n\n"
+            "Return JSON with this shape:\n"
+            "{\n"
+            '  "summary": "short position-fit summary",\n'
+            '  "best_fit_positions": ["positions or roles that fit the visible traits"],\n'
+            '  "role_projection": "how the player might be used by a team",\n'
+            '  "supporting_evidence": [\n'
+            "    {\n"
+            '      "timestamp": "mm:ss",\n'
+            '      "observation": "visible evidence for the fit",\n'
+            '      "fit_signal": "trait, role, or skill shown"\n'
+            "    }\n"
+            "  ],\n"
+            '  "concerns_or_unknowns": ["fit-related unknowns or missing evidence"],\n'
+            '  "additional_film_to_request": ["specific clips a coach should ask for"]\n'
+            "}"
+        ),
+    },
+    "follow_up_questions": {
+        "label": "Follow-Up Questions",
+        "instruction": (
+            "Focus on practical follow-up questions a coach should ask the player, "
+            "club/team, or recruiting contact after watching this reel.\n\n"
+            "Return JSON with this shape:\n"
+            "{\n"
+            '  "summary": "short summary of what the reel shows and does not prove",\n'
+            '  "questions_for_player": ["questions to ask the player directly"],\n'
+            '  "questions_for_coach_or_team": ["questions for a coach, club, or team contact"],\n'
+            '  "film_to_request": ["specific extra film or situations to request"],\n'
+            '  "verification_items": ["claims, context, or traits to verify"]\n'
+            "}"
+        ),
+    },
+}
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
@@ -72,6 +153,82 @@ def parse_response_json(response_json: str | None) -> dict | list | None:
         return json.loads(response_json)
     except json.JSONDecodeError:
         return None
+
+
+@app.template_filter("friendly_datetime")
+def friendly_datetime(value: datetime | None) -> str:
+    """Format a datetime for compact display in templates."""
+    if value is None:
+        return "Unknown"
+    return value.strftime("%d %b %Y, %H:%M")
+
+
+def as_utc_datetime(value: datetime) -> datetime:
+    """Return a timezone-aware UTC datetime, assuming naive DB values are UTC."""
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+@app.template_filter("iso_datetime")
+def iso_datetime(value: datetime | None) -> str:
+    """Format a datetime as ISO-8601 for browser-local rendering."""
+    if value is None:
+        return ""
+    return as_utc_datetime(value).isoformat()
+
+
+def build_full_prompt(boilerplate_prompt: str, output_mode: str, user_prompt: str) -> str:
+    """Build the complete prompt sent to Gemini for one review."""
+    output_mode_instruction = OUTPUT_MODES[output_mode]["instruction"]
+    return (
+        f"{boilerplate_prompt}\n\n"
+        f"OUTPUT MODE:\n{output_mode_instruction}\n\n"
+        f"USER REQUEST:\n{user_prompt}"
+    )
+
+
+def validate_review_settings(output_mode: str, model: str) -> str | None:
+    """Return a validation error for submitted review settings, if any."""
+    if output_mode not in OUTPUT_MODES:
+        return "Choose one of the available output modes."
+    if model not in GEMINI_MODELS:
+        return "Choose one of the available Gemini models."
+    return None
+
+
+def create_queued_review(
+    *,
+    run_id: str | None = None,
+    user_id: str,
+    video_filename: str,
+    stored_path: Path,
+    model: str,
+    user_prompt: str,
+    output_mode: str,
+    video_duration_seconds: float | None = None,
+) -> PromptRun:
+    """Create and start a queued review for an already stored video."""
+    run_id = run_id or str(uuid.uuid4())
+    boilerplate_prompt = load_boilerplate_prompt()
+    full_prompt = build_full_prompt(boilerplate_prompt, output_mode, user_prompt)
+    review = PromptRun(
+        id=run_id,
+        created_at=datetime.now(UTC),
+        user_id=user_id,
+        video_filename=video_filename,
+        stored_video_path=str(stored_path),
+        video_duration_seconds=video_duration_seconds,
+        model=model,
+        boilerplate_prompt=boilerplate_prompt,
+        user_prompt=user_prompt,
+        full_prompt=full_prompt,
+        status="queued",
+    )
+    create_run(review)
+    set_progress(run_id, "queued", "Video ready. Queued for processing.", 5)
+    start_background_run(run_id, stored_path, full_prompt, model)
+    return review
 
 
 def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
@@ -163,6 +320,7 @@ def index():
         error=request.args.get("error"),
         gemini_models=GEMINI_MODELS,
         max_minutes=MAX_VIDEO_SECONDS // 60,
+        output_modes=OUTPUT_MODES,
         run_statuses={run.id: run_status_payload(run) for run in runs},
         runs=runs,
     )
@@ -273,36 +431,27 @@ def submit():
     video.save(stored_path)
 
     user_prompt = request.form.get("user_prompt", "").strip()
+    output_mode = request.form.get("output_mode", "general").strip() or "general"
     model = request.form.get("model", DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    if model not in GEMINI_MODELS:
-        error = "Choose one of the available Gemini models."
+    error = validate_review_settings(output_mode, model)
+    if error:
         if wants_json_response():
             return jsonify({"error": error}), 400
         return redirect(url_for("index", error=error))
 
-    boilerplate_prompt = load_boilerplate_prompt()
-    full_prompt = f"{boilerplate_prompt}\n\nUSER REQUEST:\n{user_prompt}"
-
-    create_run(
-        PromptRun(
-            id=run_id,
-            created_at=datetime.now(UTC),
-            user_id=user.id,
-            video_filename=video.filename,
-            stored_video_path=str(stored_path),
-            model=model,
-            boilerplate_prompt=boilerplate_prompt,
-            user_prompt=user_prompt,
-            full_prompt=full_prompt,
-            status="queued",
-        )
+    review = create_queued_review(
+        run_id=run_id,
+        user_id=user.id,
+        video_filename=video.filename,
+        stored_path=stored_path,
+        model=model,
+        user_prompt=user_prompt,
+        output_mode=output_mode,
     )
 
-    set_progress(run_id, "queued", "Upload complete. Queued for processing.", 5)
-    start_background_run(run_id, stored_path, full_prompt, model)
     if wants_json_response():
-        return jsonify({"redirect_url": url_for("result", run_id=run_id)})
-    return redirect(url_for("result", run_id=run_id))
+        return jsonify({"redirect_url": url_for("result", run_id=review.id)})
+    return redirect(url_for("result", run_id=review.id))
 
 
 @app.get("/runs/<run_id>")
@@ -313,14 +462,59 @@ def result(run_id: str):
     run = find_run(run_id, user)
     if run is None:
         return redirect(url_for("index", error="Run not found."))
+    video_available = bool(run.stored_video_path and Path(run.stored_video_path).exists())
     return render_template(
         "result.html",
         artifact_path=str(OUT_DIR / run.id) if run.status == "completed" else None,
         current_user=user,
+        error=request.args.get("error"),
+        gemini_models=GEMINI_MODELS,
+        output_modes=OUTPUT_MODES,
         response_data=parse_response_json(run.parsed_response_json),
         run=run,
         run_status=run_status_payload(run),
+        video_available=video_available,
     )
+
+
+@app.post("/runs/<run_id>/review-again")
+@login_required
+def review_again(run_id: str):
+    """Create a new review using a retained video from a previous review."""
+    user = current_user()
+    source_run = find_run(run_id, user)
+    if source_run is None:
+        return redirect(url_for("index", error="Run not found."))
+    if source_run.user_id != user.id and user.role != "admin":
+        error = "Only the original submitter can review this video again."
+        return redirect(url_for("result", run_id=run_id, error=error))
+
+    if not source_run.stored_video_path:
+        error = "The original video is no longer available for another review."
+        return redirect(url_for("result", run_id=run_id, error=error))
+
+    stored_path = Path(source_run.stored_video_path)
+    if not stored_path.exists():
+        error = "The original video is no longer available for another review."
+        return redirect(url_for("result", run_id=run_id, error=error))
+
+    user_prompt = request.form.get("user_prompt", "").strip()
+    output_mode = request.form.get("output_mode", "general").strip() or "general"
+    model = request.form.get("model", source_run.model).strip() or source_run.model
+    error = validate_review_settings(output_mode, model)
+    if error:
+        return redirect(url_for("result", run_id=run_id, error=error))
+
+    review = create_queued_review(
+        user_id=user.id,
+        video_filename=source_run.video_filename,
+        stored_path=stored_path,
+        model=model,
+        user_prompt=user_prompt,
+        output_mode=output_mode,
+        video_duration_seconds=source_run.video_duration_seconds,
+    )
+    return redirect(url_for("result", run_id=review.id))
 
 
 @app.get("/runs/<run_id>/status")

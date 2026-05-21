@@ -23,22 +23,23 @@
 - [x] Improve form labels and helper text.
 - [x] Rename "Coach ask" to something clearer, such as "What do you want Gemini to focus on?"
 - [x] Add better empty states for recent reviews and response.
-- [ ] Add clearer status messages for upload, validation, Gemini upload, Gemini processing, done, and failed.
+- [x] Add clearer status messages for upload, validation, Gemini upload, Gemini processing, done, and failed.
 - [x] Improve top navigation spacing, labels, and admin/user controls.
 - [x] Make recent reviews easier to scan with clearer titles, metadata, and spacing.
 - [x] Reduce visual weight of completed progress bars in recent reviews.
 - [x] Show owner/status/feedback metadata as quiet labels instead of dense inline text.
 - [x] Add "Copy response" button.
 - [x] Add "Download response" button.
-- [ ] Add "Review again with a new prompt" flow.
+- [x] Add "Review again with a new prompt" flow.
 - [x] Add clearer feedback labels, such as "Was this useful?" and "What should be improved?"
 - [x] Show artifact availability or path after completion.
-- [ ] Add timestamps in a friendlier format.
+- [x] Add timestamps in a friendlier format.
 - [ ] Add a compact recent reviews table once there are many reviews.
+- [ ] Add temporary protected video playback while uploaded files are retained.
 
 ## Prompt Iteration
 
-- [ ] Add output mode selector: general evaluation, SWOT, position fit, follow-up questions.
+- [x] Add output mode selector: general review, SWOT, position fit, follow-up questions.
 - [ ] Add editable advanced boilerplate prompt section.
 - [ ] Add prompt version field to review metadata.
 - [ ] Add side-by-side comparison for multiple reviews on the same video.

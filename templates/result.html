@@ -118,6 +118,7 @@
           <strong>Error:</strong> {{ run['error'] }}
         </div>
       {% endif %}
+      {% if error %}<div class="alert alert-warning">{{ error }}</div>{% endif %}
       <section class="card shadow-sm mb-4">
         <div class="card-body">
           <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
@@ -155,6 +156,51 @@
             <summary class="fw-semibold">Full Prompt Sent to Gemini</summary>
             <pre class="mt-2">{{ run['full_prompt'] }}</pre>
           </details>
+        </div>
+      </section>
+      <section class="card shadow-sm mb-4">
+        <div class="card-body">
+          <h2 class="h4">Review Again</h2>
+          {% if not run_status.is_terminal %}
+            <p class="text-secondary mb-0">Available after this review finishes.</p>
+          {% elif video_available %}
+            <form action="{{ url_for('review_again', run_id=run['id']) }}"
+                  method="post">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">Review Type</label>
+                  <select class="form-select" name="output_mode" required>
+                    {% for mode_key, mode_meta in output_modes.items() %}
+                      <option value="{{ mode_key }}">{{ mode_meta.label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">Gemini Model</label>
+                  <select class="form-select" name="model" required>
+                    {% for model_name, model_meta in gemini_models.items() %}
+                      <option value="{{ model_name }}"
+                              {% if model_name == run['model'] %}selected{% endif %}>
+                        {{ model_name }} - {{ model_meta.cost }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+              <div class="mt-3">
+                <label class="form-label fw-semibold">What should Gemini focus on?</label>
+                <textarea class="form-control"
+                          name="user_prompt"
+                          placeholder="Add any extra instructions for this new review."></textarea>
+                <div class="form-text">Leave blank to use only the selected Review Type.</div>
+              </div>
+              <button class="btn btn-primary mt-3" type="submit">Start New Review</button>
+            </form>
+          {% else %}
+            <p class="text-secondary mb-0">
+              The uploaded video is no longer available. Upload the player reel again to start a new review.
+            </p>
+          {% endif %}
         </div>
       </section>
       <section class="card shadow-sm">

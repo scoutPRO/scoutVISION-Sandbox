@@ -47,7 +47,10 @@
                     <span class="badge text-bg-light">{{ user.role|title }}</span>
                   </td>
                   <td>{{ "Yes" if user.is_active else "No" }}</td>
-                  <td class="text-secondary small">{{ user.created_at }}</td>
+                  <td class="text-secondary small">
+                    <span class="local-datetime"
+                          data-timestamp="{{ user.created_at|iso_datetime }}">{{ user.created_at|friendly_datetime }}</span>
+                  </td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -55,5 +58,17 @@
         </div>
       </section>
     </main>
+    <script>
+      document.querySelectorAll(".local-datetime").forEach((element) => {
+        const timestamp = element.dataset.timestamp;
+        if (!timestamp) {
+          return;
+        }
+        element.textContent = new Intl.DateTimeFormat(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(new Date(timestamp));
+      });
+    </script>
   </body>
 </html>

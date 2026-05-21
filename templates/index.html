@@ -59,8 +59,19 @@
               <div class="form-text">Upload one video, up to {{ max_minutes }} minutes.</div>
             </div>
             <div class="mb-3">
+              <label class="form-label fw-semibold">Review Type</label>
+              <select class="form-select" id="output-mode" name="output_mode" required>
+                {% for mode_key, mode_meta in output_modes.items() %}
+                  <option value="{{ mode_key }}" data-instruction="{{ mode_meta.instruction }}">
+                    {{ mode_meta.label }}
+                  </option>
+                {% endfor %}
+              </select>
+              <div class="form-text">Choose the main format for Gemini's response.</div>
+            </div>
+            <div class="mb-3">
               <label class="form-label fw-semibold">What should Gemini focus on?</label>
-              <textarea class="form-control" name="user_prompt" required>{{ default_user_prompt }}</textarea>
+              <textarea class="form-control" id="user-prompt" name="user_prompt" required>{{ default_user_prompt }}</textarea>
               <div class="form-text">
                 Ask for the scouting lens you want, such as SWOT, position fit, or follow-up questions.
               </div>
@@ -77,8 +88,15 @@
               </select>
             </div>
             <details class="mb-3">
-              <summary class="fw-semibold">Boilerplate Prompt</summary>
-              <pre class="mt-2">{{ boilerplate }}</pre>
+              <summary class="fw-semibold">Prompt Sent to Gemini</summary>
+              <div class="mt-2">
+                <div class="small text-secondary text-uppercase">Base Prompt</div>
+                <pre>{{ boilerplate }}</pre>
+                <div class="small text-secondary text-uppercase">Review Type Prompt</div>
+                <pre id="output-mode-preview"></pre>
+                <div class="small text-secondary text-uppercase">User Request</div>
+                <pre id="user-prompt-preview"></pre>
+              </div>
             </details>
             <button class="btn btn-primary" type="submit">Start Review</button>
           </form>
@@ -107,7 +125,8 @@
                 <span class="badge text-bg-light">{{ run['status']|title }}</span>
               </div>
               <div class="small text-secondary mb-3">
-                <span>{{ run['created_at'] }}</span>
+                <span class="local-datetime"
+                      data-timestamp="{{ run['created_at']|iso_datetime }}">{{ run['created_at']|friendly_datetime }}</span>
                 {% if current_user.role == "admin" %}
                   <span class="mx-2">·</span>
                   <span>
@@ -145,6 +164,20 @@
       const uploadStatus = document.querySelector("#upload-status");
       const uploadBar = document.querySelector("#upload-progress-bar");
       const uploadMessage = document.querySelector("#upload-status-message");
+      const outputMode = document.querySelector("#output-mode");
+      const outputModePreview = document.querySelector("#output-mode-preview");
+      const userPrompt = document.querySelector("#user-prompt");
+      const userPromptPreview = document.querySelector("#user-prompt-preview");
+
+      function updatePromptPreview() {
+        const selectedMode = outputMode.selectedOptions[0];
+        outputModePreview.textContent = selectedMode.dataset.instruction;
+        userPromptPreview.textContent = userPrompt.value;
+      }
+
+      outputMode.addEventListener("change", updatePromptPreview);
+      userPrompt.addEventListener("input", updatePromptPreview);
+      updatePromptPreview();
 
       function setUploadStatus(message, percent) {
         uploadStatus.classList.remove("is-hidden");
@@ -214,6 +247,17 @@
       }
 
       document.querySelectorAll(".run-card[data-terminal='False']").forEach(pollRun);
+
+      document.querySelectorAll(".local-datetime").forEach((element) => {
+        const timestamp = element.dataset.timestamp;
+        if (!timestamp) {
+          return;
+        }
+        element.textContent = new Intl.DateTimeFormat(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(new Date(timestamp));
+      });
     </script>
   </body>
 </html>
