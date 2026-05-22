@@ -1,10 +1,11 @@
 """Video upload and inspection helpers."""
 
+import time
 from pathlib import Path
 
 import cv2
 
-from settings import ALLOWED_EXTENSIONS
+from settings import ALLOWED_EXTENSIONS, UPLOAD_RETENTION_DAYS
 
 
 def allowed_video(filename: str) -> bool:
@@ -28,3 +29,14 @@ def get_video_duration(path: Path) -> float:
 def delete_video(path: Path) -> None:
     """Delete an uploaded video if it still exists."""
     path.unlink(missing_ok=True)
+
+
+def delete_expired_uploads(upload_dir: Path) -> None:
+    """Delete uploaded files older than the configured retention window."""
+    if UPLOAD_RETENTION_DAYS <= 0 or not upload_dir.exists():
+        return
+
+    cutoff = time.time() - (UPLOAD_RETENTION_DAYS * 24 * 60 * 60)
+    for upload_path in upload_dir.iterdir():
+        if upload_path.is_file() and upload_path.stat().st_mtime < cutoff:
+            delete_video(upload_path)

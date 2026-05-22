@@ -31,7 +31,7 @@ from lib.gemini_client import call_gemini
 from lib.progress import run_status_payload, set_progress
 from lib.prompt_runs import create_run, find_run, recent_runs, update_run
 from lib.users import list_users
-from lib.video import allowed_video, delete_video, get_video_duration
+from lib.video import allowed_video, delete_expired_uploads, delete_video, get_video_duration
 from models import PromptRun
 from settings import (
     ALLOW_SIGNUP,
@@ -296,6 +296,7 @@ def start_background_run(
 def ensure_db() -> None:
     """Ensure local storage exists before handling a request."""
     init_db()
+    delete_expired_uploads(UPLOAD_DIR)
     bootstrap_admin_user()
 
 

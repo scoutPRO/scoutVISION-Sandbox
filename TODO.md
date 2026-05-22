@@ -48,8 +48,8 @@
 
 - [ ] Decide whether DB stores full prompts/responses long-term or only artifact paths.
 - [ ] Add cleanup command for old uploads/artifacts.
-- [ ] Add configurable retention policy.
-- [ ] Make uploaded-video retention clear in the UI/admin docs.
+- [x] Add configurable upload retention policy.
+- [x] Make uploaded-video retention clear in the UI/admin docs.
 
 ## Database And Architecture
 

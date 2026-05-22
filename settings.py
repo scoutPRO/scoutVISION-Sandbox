@@ -53,8 +53,9 @@ GEMINI_MODELS = {
 }
 DEFAULT_MODEL = normalize_gemini_model(os.getenv("GEMINI_MODEL", "models/gemini-2.5-pro"))
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".webm", ".mkv"}
-KEEP_UPLOADED_VIDEOS = env_bool("KEEP_UPLOADED_VIDEOS", False)
+KEEP_UPLOADED_VIDEOS = env_bool("KEEP_UPLOADED_VIDEOS", True)
 KEEP_FAILED_UPLOADS = env_bool("KEEP_FAILED_UPLOADS", True)
+UPLOAD_RETENTION_DAYS = int(os.getenv("UPLOAD_RETENTION_DAYS", "3"))
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
 BOOTSTRAP_ADMIN_EMAIL = os.getenv("BOOTSTRAP_ADMIN_EMAIL")
 BOOTSTRAP_ADMIN_PASSWORD = os.getenv("BOOTSTRAP_ADMIN_PASSWORD")
