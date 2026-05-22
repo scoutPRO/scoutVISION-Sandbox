@@ -114,6 +114,12 @@
         </div>
         {% for run in runs %}
           {% set status = run_statuses[run.id] %}
+          {% set status_color = {
+                      "completed": "success",
+                      "failed": "danger",
+                      "processing": "primary",
+                      "queued": "secondary",
+                    }.get(run['status'], "secondary") %}
           <article class="card run-card shadow-sm mb-3"
                    data-run-id="{{ run.id }}"
                    data-terminal="{{ status.is_terminal }}">
@@ -122,7 +128,7 @@
                 <a class="fw-semibold" href="{{ url_for('result', run_id=run['id']) }}">
                   {{ run['video_filename'] }}
                 </a>
-                <span class="badge text-bg-light">{{ run['status']|title }}</span>
+                <span class="badge text-bg-{{ status_color }}">{{ run['status']|title }}</span>
               </div>
               <div class="small text-secondary mb-3">
                 <span class="local-datetime"
@@ -144,7 +150,8 @@
               </div>
               {% if not status.is_terminal %}
                 <div class="progress">
-                  <div class="progress-bar" style="width: {{ status.progress_percent }}%;"></div>
+                  <div class="progress-bar bg-{{ status_color }}"
+                       style="width: {{ status.progress_percent }}%"></div>
                 </div>
               {% endif %}
               <div class="status-message small text-secondary mt-2">{{ status.message }}</div>

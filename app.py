@@ -268,6 +268,10 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
             export_run_artifacts(completed_run)
         set_progress(run_id, "completed", "Gemini response is ready.", 100)
     except Exception as exc:
+        diagnostics = getattr(exc, "gemini_file_diagnostics", None)
+        if diagnostics:
+            app.logger.error("Review %s Gemini file diagnostics: %s", run_id, diagnostics)
+        app.logger.exception("Review %s failed while processing %s.", run_id, video_path)
         update_run(run_id, status="failed", error=str(exc))
         set_progress(run_id, "failed", str(exc), 100)
         if not KEEP_UPLOADED_VIDEOS and not KEEP_FAILED_UPLOADS:
