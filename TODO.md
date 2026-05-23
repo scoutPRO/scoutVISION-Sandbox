@@ -34,6 +34,8 @@
 - [x] Add clearer feedback labels, such as "Was this useful?" and "What should be improved?"
 - [x] Show artifact availability or path after completion.
 - [x] Add timestamps in a friendlier format.
+- [ ] Add clearer user-facing failure copy when Gemini cannot process a video.
+- [ ] Add basic favicon and app icons to avoid missing `/favicon.ico` requests.
 - [ ] Add a compact recent reviews table once there are many reviews.
 - [ ] Add temporary protected video playback while uploaded files are retained.
 
