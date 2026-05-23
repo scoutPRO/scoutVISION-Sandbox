@@ -226,7 +226,12 @@ def create_queued_review(
         status="queued",
     )
     create_run(review)
-    set_progress(run_id, "queued", "Video ready. Queued for processing.", 5)
+    set_progress(
+        run_id,
+        "queued",
+        "Step 2 of 2: Video saved. Waiting to start the Gemini review.",
+        5,
+    )
     start_background_run(run_id, stored_path, full_prompt, model)
     return review
 
@@ -234,7 +239,12 @@ def create_queued_review(
 def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
     """Process one queued run and persist the Gemini result or failure."""
     update_run(run_id, status="processing", error=None)
-    set_progress(run_id, "validating_video", "Checking video duration.", 15)
+    set_progress(
+        run_id,
+        "validating_video",
+        "Step 2 of 2: Checking video duration.",
+        15,
+    )
     video_path = Path(stored_path)
     try:
         duration = get_video_duration(video_path)
@@ -243,7 +253,12 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
                 f"Video is {duration:.1f} seconds; max is {MAX_VIDEO_SECONDS} seconds."
             )
         update_run(run_id, video_duration_seconds=duration)
-        set_progress(run_id, "video_ready", "Video validated and ready for Gemini.", 25)
+        set_progress(
+            run_id,
+            "video_ready",
+            "Step 2 of 2: Video validated and ready for Gemini.",
+            25,
+        )
         response_text, parsed_response_json, full_response_json = call_gemini(
             video_path,
             full_prompt,
@@ -266,7 +281,7 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
         completed_run = find_run(run_id)
         if completed_run is not None:
             export_run_artifacts(completed_run)
-        set_progress(run_id, "completed", "Gemini response is ready.", 100)
+        set_progress(run_id, "completed", "Gemini review is ready.", 100)
     except Exception as exc:
         diagnostics = getattr(exc, "gemini_file_diagnostics", None)
         if diagnostics:

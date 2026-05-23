@@ -104,7 +104,9 @@
             <div class="progress">
               <div id="upload-progress-bar" class="progress-bar"></div>
             </div>
-            <div id="upload-status-message" class="form-text mt-2">Preparing upload.</div>
+            <div id="upload-status-message" class="form-text mt-2">
+              Preparing to upload the video to ScoutVision.
+            </div>
           </div>
         </div>
       </section>
@@ -200,19 +202,22 @@
 
         request.upload.addEventListener("progress", (uploadEvent) => {
           if (!uploadEvent.lengthComputable) {
-            setUploadStatus("Uploading video.", 15);
+            setUploadStatus("Step 1 of 2: Uploading video to ScoutVision.", 15);
             return;
           }
           const percent = Math.max(
             5,
             Math.min(95, Math.round((uploadEvent.loaded / uploadEvent.total) * 100)),
           );
-          setUploadStatus("Uploading video.", percent);
+          setUploadStatus("Step 1 of 2: Uploading video to ScoutVision.", percent);
         });
 
         request.addEventListener("load", () => {
           if (request.status >= 200 && request.status < 300) {
-            setUploadStatus("Upload complete. Opening review status.", 100);
+            setUploadStatus(
+              "Upload complete. Opening Gemini review status.",
+              100,
+            );
             const data = JSON.parse(request.responseText);
             window.location.href = data.redirect_url;
             return;
@@ -225,7 +230,7 @@
           setUploadStatus("Upload failed. Please try again.", 100);
         });
 
-        setUploadStatus("Starting upload.", 5);
+        setUploadStatus("Preparing upload to ScoutVision.", 5);
         request.send(new FormData(uploadForm));
       });
 

@@ -86,7 +86,11 @@ def build_video_part(
     mime_type = mimetypes.guess_type(video_path.name)[0] or "video/mp4"
     if video_path.stat().st_size < INLINE_VIDEO_MAX_BYTES:
         if progress_callback:
-            progress_callback("sending_to_gemini", "Sending small video to Gemini.", 55)
+            progress_callback(
+                "sending_to_gemini",
+                "Step 2 of 2: Sending small video directly to Gemini.",
+                55,
+            )
         LOGGER.info(
             "Sending inline Gemini video. path=%s mime_type=%s size_bytes=%s",
             video_path,
@@ -96,10 +100,18 @@ def build_video_part(
         return types.Part(inline_data=types.Blob(data=video_path.read_bytes(), mime_type=mime_type))
 
     if progress_callback:
-        progress_callback("uploading_to_gemini", "Uploading video to Gemini.", 35)
+        progress_callback(
+            "uploading_to_gemini",
+            "Step 2 of 2: Uploading saved video to Gemini.",
+            35,
+        )
     uploaded_file = client.files.upload(file=str(video_path))
     if progress_callback:
-        progress_callback("waiting_for_gemini", "Waiting for Gemini to ingest the video.", 55)
+        progress_callback(
+            "waiting_for_gemini",
+            "Step 2 of 2: Waiting for Gemini to ingest the video.",
+            55,
+        )
     uploaded_file = wait_for_active(client, uploaded_file)
     return types.Part.from_uri(
         file_uri=uploaded_file.uri,
@@ -121,7 +133,11 @@ def call_gemini(
     client = genai.Client(api_key=api_key)
     video_part = build_video_part(client, video_path, progress_callback)
     if progress_callback:
-        progress_callback("generating_response", "Gemini is analyzing the video.", 75)
+        progress_callback(
+            "generating_response",
+            "Step 2 of 2: Gemini is analyzing the video.",
+            75,
+        )
     response = client.models.generate_content(
         model=model,
         contents=[
