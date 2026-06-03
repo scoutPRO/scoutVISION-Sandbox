@@ -1,4 +1,4 @@
-"""ScoutVision Gemini prompt sandbox.
+"""scoutVISION Gemini prompt sandbox.
 
 This is a small beta tester app for iterating on Gemini prompts against
 recruit highlight reels.
@@ -6,6 +6,7 @@ recruit highlight reels.
 
 import json
 import os
+import re
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -48,6 +49,14 @@ from settings import (
 )
 
 DEFAULT_USER_PROMPT = "Identify what a coach should notice first about this recruit."
+USER_PROMPT_SECTION_LABELS = {
+    "PLAYER TO FOCUS ON": "Player to Focus On",
+    "EVALUATION REQUEST": "Evaluation Request",
+}
+USER_PROMPT_SECTION_RE = re.compile(
+    r"(PLAYER TO FOCUS ON|EVALUATION REQUEST):\s*",
+    re.IGNORECASE,
+)
 OUTPUT_MODES = {
     "general": {
         "label": "General Review",
@@ -188,6 +197,49 @@ def build_full_prompt(boilerplate_prompt: str, output_mode: str, user_prompt: st
     )
 
 
+def review_type_label_from_prompt(full_prompt: str) -> str:
+    """Return the review type label represented by a stored full prompt."""
+    for mode_meta in OUTPUT_MODES.values():
+        if mode_meta["instruction"] in full_prompt:
+            return mode_meta["label"]
+    return "Unknown"
+
+
+def user_prompt_display_sections(user_prompt: str | None) -> list[dict[str, str]]:
+    """Return user prompt sections with friendly labels for display."""
+    if not user_prompt:
+        return []
+
+    cleaned_prompt = user_prompt.strip()
+    matches = list(USER_PROMPT_SECTION_RE.finditer(cleaned_prompt))
+    if not matches:
+        return [{"label": "", "text": cleaned_prompt}]
+
+    sections = []
+    leading_text = cleaned_prompt[: matches[0].start()].strip()
+    if leading_text:
+        sections.append({"label": "", "text": leading_text})
+
+    for index, match in enumerate(matches):
+        text_start = match.end()
+        text_end = matches[index + 1].start() if index + 1 < len(matches) else None
+        text = cleaned_prompt[text_start:text_end].strip()
+        if not text:
+            continue
+        label = USER_PROMPT_SECTION_LABELS[match.group(1).upper()]
+        sections.append({"label": label, "text": text})
+
+    return sections
+
+
+def user_prompt_section_text(user_prompt: str | None, label: str) -> str:
+    """Return one parsed user prompt section value by friendly label."""
+    for section in user_prompt_display_sections(user_prompt):
+        if section["label"] == label:
+            return section["text"]
+    return ""
+
+
 def validate_review_settings(output_mode: str, model: str) -> str | None:
     """Return a validation error for submitted review settings, if any."""
     if output_mode not in OUTPUT_MODES:
@@ -226,7 +278,12 @@ def create_queued_review(
         status="queued",
     )
     create_run(review)
-    set_progress(run_id, "queued", "Video ready. Queued for processing.", 5)
+    set_progress(
+        run_id,
+        "queued",
+        "Step 2 of 2: Video saved. Waiting to start the Gemini review.",
+        5,
+    )
     start_background_run(run_id, stored_path, full_prompt, model)
     return review
 
@@ -234,7 +291,12 @@ def create_queued_review(
 def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
     """Process one queued run and persist the Gemini result or failure."""
     update_run(run_id, status="processing", error=None)
-    set_progress(run_id, "validating_video", "Checking video duration.", 15)
+    set_progress(
+        run_id,
+        "validating_video",
+        "Step 2 of 2: Checking video duration.",
+        15,
+    )
     video_path = Path(stored_path)
     try:
         duration = get_video_duration(video_path)
@@ -243,7 +305,12 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
                 f"Video is {duration:.1f} seconds; max is {MAX_VIDEO_SECONDS} seconds."
             )
         update_run(run_id, video_duration_seconds=duration)
-        set_progress(run_id, "video_ready", "Video validated and ready for Gemini.", 25)
+        set_progress(
+            run_id,
+            "video_ready",
+            "Step 2 of 2: Video validated and ready for Gemini.",
+            25,
+        )
         response_text, parsed_response_json, full_response_json = call_gemini(
             video_path,
             full_prompt,
@@ -266,7 +333,7 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
         completed_run = find_run(run_id)
         if completed_run is not None:
             export_run_artifacts(completed_run)
-        set_progress(run_id, "completed", "Gemini response is ready.", 100)
+        set_progress(run_id, "completed", "Gemini review is ready.", 100)
     except Exception as exc:
         diagnostics = getattr(exc, "gemini_file_diagnostics", None)
         if diagnostics:
@@ -478,6 +545,12 @@ def result(run_id: str):
         response_data=parse_response_json(run.parsed_response_json),
         run=run,
         run_status=run_status_payload(run),
+        review_type_label=review_type_label_from_prompt(run.full_prompt),
+        review_again_player_focus=user_prompt_section_text(
+            run.user_prompt,
+            "Player to Focus On",
+        ),
+        user_prompt_sections=user_prompt_display_sections(run.user_prompt),
         video_available=video_available,
     )
 

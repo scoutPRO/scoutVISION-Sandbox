@@ -1,12 +1,12 @@
-# ScoutVision Gemini Sandbox
+# scoutVISION Gemini Sandbox
 
 Small tester site for iterating on Gemini prompts against player reels.
 
 ## What It Does
 
 - Upload one player reel, limited to 5 minutes by default.
-- Combines a shared base prompt with a selected review type and tester request.
-- Lets testers choose an output shape and adjust the user-facing Gemini ask.
+- Combines a shared base prompt with a selected review type, player focus, and tester request.
+- Lets testers choose an output shape, identify the player Gemini should focus on, and adjust the scouting lens.
 - Requires users to log in before submitting or viewing reviews.
 - Lets beta testers create their own non-admin accounts when signup is enabled.
 - Sends the video and composed prompt to Gemini.
