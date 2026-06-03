@@ -127,6 +127,21 @@
       {% if error %}<div class="alert alert-warning">{{ error }}</div>{% endif %}
       <section class="card shadow-sm mb-4">
         <div class="card-body">
+          <h2 class="h4 mb-3">Review Setup</h2>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <div class="text-secondary small text-uppercase mb-1">Review Type</div>
+              <p class="fw-semibold mb-0">{{ review_type_label }}</p>
+            </div>
+            <div class="col-md-8">
+              <div class="text-secondary small text-uppercase mb-1">User Request</div>
+              <p class="mb-0">{{ run['user_prompt'] or 'No additional request provided.' }}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="card shadow-sm mb-4">
+        <div class="card-body">
           <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
             <h2 class="h4 mb-0">Response</h2>
             {% if run['parsed_response_json'] or run['response_text'] %}

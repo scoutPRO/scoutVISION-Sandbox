@@ -188,6 +188,14 @@ def build_full_prompt(boilerplate_prompt: str, output_mode: str, user_prompt: st
     )
 
 
+def review_type_label_from_prompt(full_prompt: str) -> str:
+    """Return the review type label represented by a stored full prompt."""
+    for mode_meta in OUTPUT_MODES.values():
+        if mode_meta["instruction"] in full_prompt:
+            return mode_meta["label"]
+    return "Unknown"
+
+
 def validate_review_settings(output_mode: str, model: str) -> str | None:
     """Return a validation error for submitted review settings, if any."""
     if output_mode not in OUTPUT_MODES:
@@ -493,6 +501,7 @@ def result(run_id: str):
         response_data=parse_response_json(run.parsed_response_json),
         run=run,
         run_status=run_status_payload(run),
+        review_type_label=review_type_label_from_prompt(run.full_prompt),
         video_available=video_available,
     )
 
