@@ -1,4 +1,4 @@
-"""ScoutVision Gemini prompt sandbox.
+"""scoutVISION Gemini prompt sandbox.
 
 This is a small beta tester app for iterating on Gemini prompts against
 recruit highlight reels.

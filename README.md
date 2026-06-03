@@ -1,4 +1,4 @@
-# ScoutVision Gemini Sandbox
+# scoutVISION Gemini Sandbox
 
 Small tester site for iterating on Gemini prompts against player reels.
 
