@@ -22,6 +22,8 @@
 
 - [x] Improve form labels and helper text.
 - [x] Rename "Coach ask" to something clearer, such as "What do you want Gemini to focus on?"
+- [x] Split player identification from the evaluation request in the review form.
+- [x] Show review type, player focus, and evaluation request clearly on the result page.
 - [x] Add better empty states for recent reviews and response.
 - [x] Add clearer status messages for upload, validation, Gemini upload, Gemini processing, done, and failed.
 - [x] Improve top navigation spacing, labels, and admin/user controls.
