@@ -152,6 +152,9 @@
                 <button class="btn btn-outline-secondary btn-sm"
                         id="download-response"
                         type="button">Download Response</button>
+                <button class="btn btn-outline-secondary btn-sm"
+                        id="download-json"
+                        type="button">Download JSON</button>
               </div>
             {% endif %}
           </div>
@@ -265,9 +268,68 @@
       const videoDuration = document.querySelector("#video-duration");
       const copyResponse = document.querySelector("#copy-response");
       const downloadResponse = document.querySelector("#download-response");
+      const downloadJson = document.querySelector("#download-json");
       const responseText = {{ (run['parsed_response_json'] or run['response_text'] or '')|tojson }};
-      const responseFilename = {{ (run['id'] ~ "_response.json")|tojson }};
+      const responseFilename = {{ (run['id'] ~ "_response.txt")|tojson }};
+      const responseJsonFilename = {{ (run['id'] ~ "_response.json")|tojson }};
+      const reviewMetadata = {
+        video: {{ run['video_filename']|tojson }},
+        reviewType: {{ review_type_label|tojson }},
+        model: {{ run['model']|tojson }},
+        userRequest: {{ (run['user_prompt'] or 'No additional request provided.')|tojson }},
+      };
       const initialTerminal = runStatus.dataset.terminal === "True";
+
+      function titleizeKey(key) {
+        return key
+          .replaceAll("_", " ")
+          .replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1));
+      }
+
+      function renderReportValue(value, depth = 0) {
+        const indent = "  ".repeat(depth);
+        if (Array.isArray(value)) {
+          return value.map((item) => {
+            if (item !== null && typeof item === "object") {
+              return `${indent}-\n${renderReportValue(item, depth + 1)}`;
+            }
+            return `${indent}- ${item}`;
+          }).join("\n");
+        }
+        if (value !== null && typeof value === "object") {
+          return Object.entries(value).map(([key, nestedValue]) => {
+            const heading = `${indent}${titleizeKey(key)}`;
+            const renderedValue = renderReportValue(nestedValue, depth + 1);
+            return `${heading}\n${renderedValue}`;
+          }).join("\n\n");
+        }
+        return `${indent}${value ?? ""}`;
+      }
+
+      function buildTextReport() {
+        const lines = [
+          "scoutVISION Gemini Review",
+          "",
+          `Video: ${reviewMetadata.video}`,
+          `Review Type: ${reviewMetadata.reviewType}`,
+          `Model: ${reviewMetadata.model}`,
+          "",
+          "User Request",
+          reviewMetadata.userRequest,
+          "",
+          "Response",
+          "",
+        ];
+
+        try {
+          const parsedResponse = JSON.parse(responseText);
+          lines.push(renderReportValue(parsedResponse));
+        } catch {
+          lines.push(responseText);
+        }
+
+        return `${lines.join("\n").trim()}\n`;
+      }
 
       function formatDuration(seconds) {
         if (seconds === null || seconds === undefined) {
@@ -302,7 +364,7 @@
 
       if (copyResponse) {
         copyResponse.addEventListener("click", () => {
-          navigator.clipboard.writeText(responseText).then(() => {
+          navigator.clipboard.writeText(buildTextReport()).then(() => {
             copyResponse.textContent = "Copied";
             window.setTimeout(() => {
               copyResponse.textContent = "Copy Response";
@@ -313,10 +375,21 @@
 
       if (downloadResponse) {
         downloadResponse.addEventListener("click", () => {
-          const blob = new Blob([responseText], { type: "application/json" });
+          const blob = new Blob([buildTextReport()], { type: "text/plain" });
           const link = document.createElement("a");
           link.href = URL.createObjectURL(blob);
           link.download = responseFilename;
+          link.click();
+          URL.revokeObjectURL(link.href);
+        });
+      }
+
+      if (downloadJson) {
+        downloadJson.addEventListener("click", () => {
+          const blob = new Blob([responseText], { type: "application/json" });
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = responseJsonFilename;
           link.click();
           URL.revokeObjectURL(link.href);
         });
