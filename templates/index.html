@@ -10,6 +10,7 @@
       body { background: #f8f9fb; }
       main { max-width: 1040px; }
       textarea { min-height: 150px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .textarea-short { min-height: 86px; }
       pre {
         white-space: pre-wrap;
         overflow-wrap: anywhere;
@@ -70,12 +71,25 @@
               <div class="form-text">Choose the main format for Gemini's response.</div>
             </div>
             <div class="mb-3">
-              <label class="form-label fw-semibold">What should Gemini focus on?</label>
-              <textarea class="form-control" id="user-prompt" name="user_prompt" required>{{ default_user_prompt }}</textarea>
+              <label class="form-label fw-semibold">Player to Focus On</label>
+              <textarea class="form-control textarea-short"
+                        id="player-focus"
+                        placeholder="Example: Mia Johnson, #12 in white, usually lined up at center on offense."></textarea>
               <div class="form-text">
-                Ask for the scouting lens you want, such as SWOT, position fit, or follow-up questions.
+                Use any clues that identify the player: name, jersey number, team color, position, or where they line up.
               </div>
             </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold">What should Gemini evaluate?</label>
+              <textarea class="form-control" id="evaluation-request" required>{{ default_user_prompt }}</textarea>
+              <div class="form-text">
+                Ask for the scouting lens you want, such as technique, position fit, SWOT, or follow-up questions.
+              </div>
+            </div>
+            <input id="user-prompt"
+                   type="hidden"
+                   name="user_prompt"
+                   value="{{ default_user_prompt }}">
             <div class="mb-3">
               <label class="form-label fw-semibold">Gemini Model</label>
               <select class="form-select" name="model" required>
@@ -175,17 +189,34 @@
       const uploadMessage = document.querySelector("#upload-status-message");
       const outputMode = document.querySelector("#output-mode");
       const outputModePreview = document.querySelector("#output-mode-preview");
+      const playerFocus = document.querySelector("#player-focus");
+      const evaluationRequest = document.querySelector("#evaluation-request");
       const userPrompt = document.querySelector("#user-prompt");
       const userPromptPreview = document.querySelector("#user-prompt-preview");
 
+      function buildUserPrompt() {
+        const playerText = playerFocus.value.trim();
+        const evaluationText = evaluationRequest.value.trim();
+        const sections = [];
+        if (playerText) {
+          sections.push(`PLAYER TO FOCUS ON:\n${playerText}`);
+        }
+        if (evaluationText) {
+          sections.push(`EVALUATION REQUEST:\n${evaluationText}`);
+        }
+        return sections.join("\n\n");
+      }
+
       function updatePromptPreview() {
         const selectedMode = outputMode.selectedOptions[0];
+        userPrompt.value = buildUserPrompt();
         outputModePreview.textContent = selectedMode.dataset.instruction;
         userPromptPreview.textContent = userPrompt.value;
       }
 
       outputMode.addEventListener("change", updatePromptPreview);
-      userPrompt.addEventListener("input", updatePromptPreview);
+      playerFocus.addEventListener("input", updatePromptPreview);
+      evaluationRequest.addEventListener("input", updatePromptPreview);
       updatePromptPreview();
 
       function setUploadStatus(message, percent) {
@@ -231,7 +262,10 @@
         });
 
         setUploadStatus("Preparing upload to scoutVISION.", 5);
-        request.send(new FormData(uploadForm));
+        userPrompt.value = buildUserPrompt();
+        const formData = new FormData(uploadForm);
+        formData.set("user_prompt", userPrompt.value);
+        request.send(formData);
       });
 
       function updateRunStatus(runElement, data) {

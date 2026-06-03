@@ -43,6 +43,7 @@
         border-radius: 6px;
       }
       textarea { min-height: 120px; }
+      .textarea-short { min-height: 86px; }
       .progress { height: 8px; }
       .json-field + .json-field { margin-top: 1.5rem; }
       .json-object .json-object {
@@ -135,7 +136,18 @@
             </div>
             <div class="col-md-8">
               <div class="text-secondary small text-uppercase mb-1">User Request</div>
-              <p class="mb-0">{{ run['user_prompt'] or 'No additional request provided.' }}</p>
+              {% if user_prompt_sections %}
+                <div class="vstack gap-1">
+                  {% for section in user_prompt_sections %}
+                    <p class="mb-0">
+                      {% if section.label %}<span class="fw-semibold">{{ section.label }}:</span>{% endif %}
+                      <span>{{ section.text }}</span>
+                    </p>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <p class="mb-0">No additional request provided.</p>
+              {% endif %}
             </div>
           </div>
         </div>
@@ -188,7 +200,8 @@
           {% if not run_status.is_terminal %}
             <p class="text-secondary mb-0">Available after this review finishes.</p>
           {% elif video_available %}
-            <form action="{{ url_for('review_again', run_id=run['id']) }}"
+            <form id="review-again-form"
+                  action="{{ url_for('review_again', run_id=run['id']) }}"
                   method="post">
               <div class="row g-3">
                 <div class="col-md-6">
@@ -212,12 +225,25 @@
                 </div>
               </div>
               <div class="mt-3">
-                <label class="form-label fw-semibold">What should Gemini focus on?</label>
+                <label class="form-label fw-semibold">Player to Focus On</label>
+                <textarea class="form-control textarea-short"
+                          id="review-again-player-focus"
+                          placeholder="Example: Mia Johnson, #12 in white, usually lined up at center on offense.">{{ review_again_player_focus }}</textarea>
+                <div class="form-text">
+                  Use any clues that identify the player: name, jersey number, team color, position, or where they line up.
+                </div>
+              </div>
+              <div class="mt-3">
+                <label class="form-label fw-semibold">What should Gemini evaluate?</label>
                 <textarea class="form-control"
-                          name="user_prompt"
+                          id="review-again-evaluation-request"
                           placeholder="Add any extra instructions for this new review."></textarea>
                 <div class="form-text">Leave blank to use only the selected Review Type.</div>
               </div>
+              <input id="review-again-user-prompt"
+                     type="hidden"
+                     name="user_prompt"
+                     value="">
               <button class="btn btn-primary mt-3" type="submit">Start New Review</button>
             </form>
           {% else %}
@@ -269,6 +295,10 @@
       const copyResponse = document.querySelector("#copy-response");
       const downloadResponse = document.querySelector("#download-response");
       const downloadJson = document.querySelector("#download-json");
+      const reviewAgainForm = document.querySelector("#review-again-form");
+      const reviewAgainPlayerFocus = document.querySelector("#review-again-player-focus");
+      const reviewAgainEvaluationRequest = document.querySelector("#review-again-evaluation-request");
+      const reviewAgainUserPrompt = document.querySelector("#review-again-user-prompt");
       const responseText = {{ (run['parsed_response_json'] or run['response_text'] or '')|tojson }};
       const responseFilename = {{ (run['id'] ~ "_response.txt")|tojson }};
       const responseJsonFilename = {{ (run['id'] ~ "_response.json")|tojson }};
@@ -279,6 +309,19 @@
         userRequest: {{ (run['user_prompt'] or 'No additional request provided.')|tojson }},
       };
       const initialTerminal = runStatus.dataset.terminal === "True";
+
+      function buildUserPrompt(playerField, evaluationField) {
+        const playerText = playerField.value.trim();
+        const evaluationText = evaluationField.value.trim();
+        const sections = [];
+        if (playerText) {
+          sections.push(`PLAYER TO FOCUS ON:\n${playerText}`);
+        }
+        if (evaluationText) {
+          sections.push(`EVALUATION REQUEST:\n${evaluationText}`);
+        }
+        return sections.join("\n\n");
+      }
 
       function titleizeKey(key) {
         return key
@@ -392,6 +435,15 @@
           link.download = responseJsonFilename;
           link.click();
           URL.revokeObjectURL(link.href);
+        });
+      }
+
+      if (reviewAgainForm) {
+        reviewAgainForm.addEventListener("submit", () => {
+          reviewAgainUserPrompt.value = buildUserPrompt(
+            reviewAgainPlayerFocus,
+            reviewAgainEvaluationRequest,
+          );
         });
       }
     </script>

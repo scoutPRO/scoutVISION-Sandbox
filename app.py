@@ -6,6 +6,7 @@ recruit highlight reels.
 
 import json
 import os
+import re
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -48,6 +49,14 @@ from settings import (
 )
 
 DEFAULT_USER_PROMPT = "Identify what a coach should notice first about this recruit."
+USER_PROMPT_SECTION_LABELS = {
+    "PLAYER TO FOCUS ON": "Player to Focus On",
+    "EVALUATION REQUEST": "Evaluation Request",
+}
+USER_PROMPT_SECTION_RE = re.compile(
+    r"(PLAYER TO FOCUS ON|EVALUATION REQUEST):\s*",
+    re.IGNORECASE,
+)
 OUTPUT_MODES = {
     "general": {
         "label": "General Review",
@@ -194,6 +203,41 @@ def review_type_label_from_prompt(full_prompt: str) -> str:
         if mode_meta["instruction"] in full_prompt:
             return mode_meta["label"]
     return "Unknown"
+
+
+def user_prompt_display_sections(user_prompt: str | None) -> list[dict[str, str]]:
+    """Return user prompt sections with friendly labels for display."""
+    if not user_prompt:
+        return []
+
+    cleaned_prompt = user_prompt.strip()
+    matches = list(USER_PROMPT_SECTION_RE.finditer(cleaned_prompt))
+    if not matches:
+        return [{"label": "", "text": cleaned_prompt}]
+
+    sections = []
+    leading_text = cleaned_prompt[: matches[0].start()].strip()
+    if leading_text:
+        sections.append({"label": "", "text": leading_text})
+
+    for index, match in enumerate(matches):
+        text_start = match.end()
+        text_end = matches[index + 1].start() if index + 1 < len(matches) else None
+        text = cleaned_prompt[text_start:text_end].strip()
+        if not text:
+            continue
+        label = USER_PROMPT_SECTION_LABELS[match.group(1).upper()]
+        sections.append({"label": label, "text": text})
+
+    return sections
+
+
+def user_prompt_section_text(user_prompt: str | None, label: str) -> str:
+    """Return one parsed user prompt section value by friendly label."""
+    for section in user_prompt_display_sections(user_prompt):
+        if section["label"] == label:
+            return section["text"]
+    return ""
 
 
 def validate_review_settings(output_mode: str, model: str) -> str | None:
@@ -502,6 +546,11 @@ def result(run_id: str):
         run=run,
         run_status=run_status_payload(run),
         review_type_label=review_type_label_from_prompt(run.full_prompt),
+        review_again_player_focus=user_prompt_section_text(
+            run.user_prompt,
+            "Player to Focus On",
+        ),
+        user_prompt_sections=user_prompt_display_sections(run.user_prompt),
         video_available=video_available,
     )
 
