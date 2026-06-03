@@ -164,9 +164,11 @@
                 <button class="btn btn-outline-secondary btn-sm"
                         id="download-response"
                         type="button">Download Response</button>
-                <button class="btn btn-outline-secondary btn-sm"
-                        id="download-json"
-                        type="button">Download JSON</button>
+                {% if response_data %}
+                  <button class="btn btn-outline-secondary btn-sm"
+                          id="download-json"
+                          type="button">Download JSON</button>
+                {% endif %}
               </div>
             {% endif %}
           </div>
@@ -237,13 +239,10 @@
                 <label class="form-label fw-semibold">What should Gemini evaluate?</label>
                 <textarea class="form-control"
                           id="review-again-evaluation-request"
+                          name="user_prompt"
                           placeholder="Add any extra instructions for this new review."></textarea>
                 <div class="form-text">Leave blank to use only the selected Review Type.</div>
               </div>
-              <input id="review-again-user-prompt"
-                     type="hidden"
-                     name="user_prompt"
-                     value="">
               <button class="btn btn-primary mt-3" type="submit">Start New Review</button>
             </form>
           {% else %}
@@ -298,7 +297,6 @@
       const reviewAgainForm = document.querySelector("#review-again-form");
       const reviewAgainPlayerFocus = document.querySelector("#review-again-player-focus");
       const reviewAgainEvaluationRequest = document.querySelector("#review-again-evaluation-request");
-      const reviewAgainUserPrompt = document.querySelector("#review-again-user-prompt");
       const responseText = {{ (run['parsed_response_json'] or run['response_text'] or '')|tojson }};
       const responseFilename = {{ (run['id'] ~ "_response.txt")|tojson }};
       const responseJsonFilename = {{ (run['id'] ~ "_response.json")|tojson }};
@@ -440,7 +438,7 @@
 
       if (reviewAgainForm) {
         reviewAgainForm.addEventListener("submit", () => {
-          reviewAgainUserPrompt.value = buildUserPrompt(
+          reviewAgainEvaluationRequest.value = buildUserPrompt(
             reviewAgainPlayerFocus,
             reviewAgainEvaluationRequest,
           );
