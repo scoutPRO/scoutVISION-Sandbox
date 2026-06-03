@@ -15,6 +15,33 @@ from google.genai import types
 ProgressCallback = Callable[[str, str, int], None]
 LOGGER = logging.getLogger(__name__)
 INLINE_VIDEO_MAX_BYTES = 20 * 1024 * 1024
+GEMINI_GENERATE_MAX_ATTEMPTS = 5
+GEMINI_GENERATE_RETRY_BASE_SEC = 2.0
+
+
+class GeminiFileIngestionError(RuntimeError):
+    """Raised when Gemini file ingestion fails with diagnostics."""
+
+    def __init__(self, message: str, diagnostics: dict[str, Any]) -> None:
+        """Initialize the error with Gemini file diagnostics."""
+        super().__init__(message)
+        self.gemini_file_diagnostics = diagnostics
+
+
+def is_transient_gemini_error(error: Exception) -> bool:
+    """Return True for Gemini errors worth retrying."""
+    text = str(error).lower()
+    transient_markers = (
+        "503",
+        "unavailable",
+        "high demand",
+        "rate limit",
+        "resource_exhausted",
+        "temporarily",
+        "timeout",
+        "deadline",
+    )
+    return any(marker in text for marker in transient_markers)
 
 
 def to_jsonable(value: Any) -> Any:
@@ -63,17 +90,18 @@ def wait_for_active(client: Any, uploaded_file: Any, max_wait_seconds: int = 180
         message = f"Gemini file did not become active. State: {state_name}"
         if error_message:
             message = f"{message}. {error_message}"
-        error = RuntimeError(message)
-        error.gemini_file_diagnostics = {
-            "file": getattr(uploaded_file, "name", None),
-            "state": state_name,
-            "code": error_code,
-            "message": error_message,
-            "details": error_details,
-            "mime_type": getattr(uploaded_file, "mime_type", None),
-            "size_bytes": getattr(uploaded_file, "size_bytes", None),
-        }
-        raise error
+        raise GeminiFileIngestionError(
+            message,
+            {
+                "file": getattr(uploaded_file, "name", None),
+                "state": state_name,
+                "code": error_code,
+                "message": error_message,
+                "details": error_details,
+                "mime_type": getattr(uploaded_file, "mime_type", None),
+                "size_bytes": getattr(uploaded_file, "size_bytes", None),
+            },
+        )
     return uploaded_file
 
 
@@ -138,24 +166,64 @@ def call_gemini(
             "Step 2 of 2: Gemini is analyzing the video.",
             75,
         )
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[
-                    video_part,
-                    types.Part.from_text(text=prompt),
-                ],
-            )
-        ],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0,
-            top_p=0.1,
-            candidate_count=1,
-        ),
+    contents = [
+        types.Content(
+            role="user",
+            parts=[
+                video_part,
+                types.Part.from_text(text=prompt),
+            ],
+        )
+    ]
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        temperature=0,
+        top_p=0.1,
+        candidate_count=1,
     )
+    response: Any | None = None
+    for attempt in range(1, GEMINI_GENERATE_MAX_ATTEMPTS + 1):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config,
+            )
+            break
+        except Exception as error:
+            is_transient = is_transient_gemini_error(error)
+            if attempt == GEMINI_GENERATE_MAX_ATTEMPTS or not is_transient:
+                if is_transient:
+                    raise RuntimeError(
+                        "Gemini response generation failed after "
+                        f"{GEMINI_GENERATE_MAX_ATTEMPTS} attempts because "
+                        "the service is temporarily unavailable or under high "
+                        "demand. Please retry the review later."
+                    ) from error
+                raise RuntimeError(f"Gemini response generation failed: {error}") from error
+
+            wait_sec = GEMINI_GENERATE_RETRY_BASE_SEC * (2 ** (attempt - 1))
+            LOGGER.warning(
+                "Gemini response generation failed with a transient error "
+                "(attempt %d/%d); retrying in %.1fs: %s",
+                attempt,
+                GEMINI_GENERATE_MAX_ATTEMPTS,
+                wait_sec,
+                error,
+            )
+            if progress_callback:
+                progress_callback(
+                    "retrying_gemini",
+                    (
+                        "Gemini is busy. Retrying analysis "
+                        f"({attempt + 1} of {GEMINI_GENERATE_MAX_ATTEMPTS})."
+                    ),
+                    75,
+                )
+            time.sleep(wait_sec)
+
+    if response is None:
+        raise RuntimeError("Gemini response generation did not return a response.")
 
     response_text = response.text or ""
     try:
