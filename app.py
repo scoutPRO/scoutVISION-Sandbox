@@ -202,9 +202,21 @@ evaluation_response_model = evaluation_ns.model(
         "evaluation_id": fields.String,
         "status": fields.String,
         "review_type": fields.String,
+        "video_filename": fields.String,
+        "video_duration_seconds": fields.Float,
+        "created_at": fields.String,
+        "error": fields.String,
         "result": fields.Raw,
         "response_text": fields.String,
         "usage": fields.Raw,
+    },
+)
+evaluation_accepted_model = evaluation_ns.model(
+    "EvaluationAccepted",
+    {
+        "evaluation_id": fields.String,
+        "status": fields.String,
+        "status_url": fields.String,
     },
 )
 evaluation_error_model = evaluation_ns.model(
@@ -366,16 +378,41 @@ def extract_usage_metadata(full_response_json: str | None) -> dict:
     return usage if isinstance(usage, dict) else {}
 
 
+def api_evaluation_payload(run: PromptRun) -> dict:
+    """Return the public API payload for one evaluation run."""
+    payload = {
+        "evaluation_id": run.id,
+        "status": run.status,
+        "review_type": review_type_label_from_prompt(run.full_prompt),
+        "video_filename": run.video_filename,
+        "video_duration_seconds": run.video_duration_seconds,
+        "created_at": as_utc_datetime(run.created_at).isoformat(),
+        "error": run.error,
+    }
+    if run.status == "completed":
+        payload.update(
+            {
+                "result": parse_api_result(run.parsed_response_json),
+                "response_text": run.response_text,
+                "usage": extract_usage_metadata(run.full_response_json),
+            }
+        )
+    return payload
+
+
 def create_queued_review(
     *,
     run_id: str | None = None,
-    user_id: str,
+    user_id: str | None,
     video_filename: str,
     stored_path: Path,
     model: str,
     user_prompt: str,
     output_mode: str,
     video_duration_seconds: float | None = None,
+    external_account_id: str | None = None,
+    external_user_id: str | None = None,
+    integration_source: str | None = None,
 ) -> PromptRun:
     """Create and start a queued review for an already stored video."""
     run_id = run_id or str(uuid.uuid4())
@@ -385,6 +422,9 @@ def create_queued_review(
         id=run_id,
         created_at=datetime.now(UTC),
         user_id=user_id,
+        external_account_id=external_account_id,
+        external_user_id=external_user_id,
+        integration_source=integration_source,
         video_filename=video_filename,
         stored_video_path=str(stored_path),
         video_duration_seconds=video_duration_seconds,
@@ -499,12 +539,11 @@ class EvaluationResource(Resource):
     """Create a scoutSMART video evaluation."""
 
     @evaluation_ns.expect(evaluation_upload_parser)
-    @evaluation_ns.response(200, "Evaluation completed.", evaluation_response_model)
+    @evaluation_ns.response(202, "Evaluation queued.", evaluation_accepted_model)
     @evaluation_ns.response(400, "Invalid request.", evaluation_error_model)
     @evaluation_ns.response(401, "Unauthorized.", evaluation_error_model)
-    @evaluation_ns.response(500, "Evaluation failed.", evaluation_error_model)
     def post(self):
-        """Evaluate one uploaded video and return the completed Gemini response."""
+        """Upload one video and queue an asynchronous Gemini evaluation."""
         auth_error = validate_api_key()
         if auth_error is not None:
             return auth_error
@@ -534,71 +573,47 @@ class EvaluationResource(Resource):
             request.form.get("player_focus", "").strip(),
             request.form.get("evaluation_request", "").strip(),
         )
-        boilerplate_prompt = load_boilerplate_prompt()
-        full_prompt = build_full_prompt(boilerplate_prompt, output_mode, user_prompt)
-        review = PromptRun(
-            id=run_id,
-            created_at=datetime.now(UTC),
+        review = create_queued_review(
+            run_id=run_id,
             user_id=None,
+            video_filename=video.filename,
+            stored_path=stored_path,
+            model=DEFAULT_MODEL,
+            user_prompt=user_prompt,
+            output_mode=output_mode,
             external_account_id=account_id,
             external_user_id=request.form.get("user_id", "").strip() or None,
             integration_source="scoutsmart_api",
-            video_filename=video.filename,
-            stored_video_path=str(stored_path),
-            video_duration_seconds=None,
-            model=DEFAULT_MODEL,
-            boilerplate_prompt=boilerplate_prompt,
-            user_prompt=user_prompt,
-            full_prompt=full_prompt,
-            status="processing",
         )
-        create_run(review)
-
-        try:
-            duration = get_video_duration(stored_path)
-            if duration > MAX_VIDEO_SECONDS:
-                raise RuntimeError(
-                    f"Video is {duration:.1f} seconds; max is {MAX_VIDEO_SECONDS} seconds."
-                )
-            response_text, parsed_response_json, full_response_json = call_gemini(
-                stored_path,
-                full_prompt,
-                DEFAULT_MODEL,
-            )
-            update_run(
-                run_id,
-                video_duration_seconds=duration,
-                response_text=response_text,
-                parsed_response_json=parsed_response_json,
-                full_response_json=full_response_json,
-                status="completed",
-                error=None,
-            )
-            completed_run = find_run(run_id)
-            if completed_run is not None:
-                export_run_artifacts(completed_run)
-        except Exception as exc:
-            app.logger.exception(
-                "API evaluation %s failed while processing %s.",
-                run_id,
-                stored_path,
-            )
-            update_run(run_id, status="failed", error=str(exc))
-            if not KEEP_UPLOADED_VIDEOS and not KEEP_FAILED_UPLOADS:
-                delete_video(stored_path)
-            return {"evaluation_id": run_id, "error": str(exc), "status": "failed"}, 500
-
-        if not KEEP_UPLOADED_VIDEOS:
-            delete_video(stored_path)
 
         return {
-            "evaluation_id": run_id,
-            "status": "completed",
-            "review_type": output_mode,
-            "result": parse_api_result(parsed_response_json),
-            "response_text": response_text,
-            "usage": extract_usage_metadata(full_response_json),
-        }
+            "evaluation_id": review.id,
+            "status": review.status,
+            "status_url": url_for("api/v1_evaluation_status_resource", evaluation_id=review.id),
+        }, 202
+
+
+@evaluation_ns.route("/evaluations/<string:evaluation_id>")
+class EvaluationStatusResource(Resource):
+    """Return status and result for a scoutSMART video evaluation."""
+
+    @evaluation_ns.response(200, "Evaluation status.", evaluation_response_model)
+    @evaluation_ns.response(401, "Unauthorized.", evaluation_error_model)
+    @evaluation_ns.response(404, "Evaluation not found.", evaluation_error_model)
+    def get(self, evaluation_id: str):
+        """Return one queued, processing, completed, or failed evaluation."""
+        auth_error = validate_api_key()
+        if auth_error is not None:
+            return auth_error
+
+        run = find_run(evaluation_id)
+        if run is None or run.integration_source != "scoutsmart_api":
+            return {
+                "evaluation_id": evaluation_id,
+                "error": "Evaluation not found.",
+                "status": "failed",
+            }, 404
+        return api_evaluation_payload(run)
 
 
 @app.get("/")
