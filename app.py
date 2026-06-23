@@ -147,22 +147,24 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 app.secret_key = SECRET_KEY
 
+LOGGER = logging.getLogger("scoutvision_sandbox")
+
 
 def configure_logging() -> None:
     """Ensure app INFO logs are visible alongside Werkzeug access logs."""
-    formatter = logging.Formatter("%(levelname)-5s [%(name)s] %(message)s")
-    handler = logging.StreamHandler()
-    handler.setFormatter(formatter)
-    handler.setLevel(logging.INFO)
-
-    app.logger.handlers.clear()
-    app.logger.addHandler(handler)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)-5s [%(name)s] %(message)s",
+        force=True,
+    )
+    app.logger.disabled = False
     app.logger.setLevel(logging.INFO)
-    app.logger.propagate = False
+    LOGGER.disabled = False
+    LOGGER.setLevel(logging.INFO)
 
 
 configure_logging()
-app.logger.info("Application logging initialized")
+LOGGER.info("Application logging initialized")
 api_authorizations = {
     "ApiKeyAuth": {
         "type": "apiKey",
@@ -258,6 +260,7 @@ evaluation_error_model = evaluation_ns.model(
 def init_db() -> None:
     """Create runtime directories and apply database migrations."""
     ensure_storage()
+    configure_logging()
 
 
 def load_boilerplate_prompt() -> str:
@@ -467,7 +470,7 @@ def create_queued_review(
         "Step 2 of 2: Video saved. Waiting to start the Gemini review.",
         5,
     )
-    app.logger.info(
+    LOGGER.info(
         "Evaluation %s queued for %s using %s",
         run_id,
         video_filename,
@@ -479,7 +482,7 @@ def create_queued_review(
 
 def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
     """Process one queued run and persist the Gemini result or failure."""
-    app.logger.info("Evaluation %s processing started", run_id)
+    LOGGER.info("Evaluation %s processing started", run_id)
     update_run(run_id, status="processing", error=None)
     set_progress(
         run_id,
@@ -495,7 +498,7 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
                 f"Video is {duration:.1f} seconds; max is {MAX_VIDEO_SECONDS} seconds."
             )
         update_run(run_id, video_duration_seconds=duration)
-        app.logger.info(
+        LOGGER.info(
             "Evaluation %s video validated: %.2f seconds",
             run_id,
             duration,
@@ -506,7 +509,7 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
             "Step 2 of 2: Video validated and ready for Gemini.",
             25,
         )
-        app.logger.info("Evaluation %s Gemini review started", run_id)
+        LOGGER.info("Evaluation %s Gemini review started", run_id)
         response_text, parsed_response_json, full_response_json = call_gemini(
             video_path,
             full_prompt,
@@ -530,12 +533,12 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
         if completed_run is not None:
             export_run_artifacts(completed_run)
         set_progress(run_id, "completed", "Gemini review is ready.", 100)
-        app.logger.info("Evaluation %s completed", run_id)
+        LOGGER.info("Evaluation %s completed", run_id)
     except Exception as exc:
         diagnostics = getattr(exc, "gemini_file_diagnostics", None)
         if diagnostics:
-            app.logger.error("Review %s Gemini file diagnostics: %s", run_id, diagnostics)
-        app.logger.exception("Review %s failed while processing %s.", run_id, video_path)
+            LOGGER.error("Review %s Gemini file diagnostics: %s", run_id, diagnostics)
+        LOGGER.exception("Review %s failed while processing %s.", run_id, video_path)
         update_run(run_id, status="failed", error=str(exc))
         set_progress(run_id, "failed", str(exc), 100)
         if not KEEP_UPLOADED_VIDEOS and not KEEP_FAILED_UPLOADS:
@@ -558,7 +561,7 @@ def start_background_run(
         daemon=True,
     )
     thread.start()
-    app.logger.info("Evaluation %s background thread started", run_id)
+    LOGGER.info("Evaluation %s background thread started", run_id)
 
 
 @app.before_request
