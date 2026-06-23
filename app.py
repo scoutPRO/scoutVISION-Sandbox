@@ -449,12 +449,19 @@ def create_queued_review(
         "Step 2 of 2: Video saved. Waiting to start the Gemini review.",
         5,
     )
+    app.logger.info(
+        "Evaluation %s queued for %s using %s",
+        run_id,
+        video_filename,
+        model,
+    )
     start_background_run(run_id, stored_path, full_prompt, model)
     return review
 
 
 def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
     """Process one queued run and persist the Gemini result or failure."""
+    app.logger.info("Evaluation %s processing started", run_id)
     update_run(run_id, status="processing", error=None)
     set_progress(
         run_id,
@@ -470,12 +477,18 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
                 f"Video is {duration:.1f} seconds; max is {MAX_VIDEO_SECONDS} seconds."
             )
         update_run(run_id, video_duration_seconds=duration)
+        app.logger.info(
+            "Evaluation %s video validated: %.2f seconds",
+            run_id,
+            duration,
+        )
         set_progress(
             run_id,
             "video_ready",
             "Step 2 of 2: Video validated and ready for Gemini.",
             25,
         )
+        app.logger.info("Evaluation %s Gemini review started", run_id)
         response_text, parsed_response_json, full_response_json = call_gemini(
             video_path,
             full_prompt,
@@ -499,6 +512,7 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
         if completed_run is not None:
             export_run_artifacts(completed_run)
         set_progress(run_id, "completed", "Gemini review is ready.", 100)
+        app.logger.info("Evaluation %s completed", run_id)
     except Exception as exc:
         diagnostics = getattr(exc, "gemini_file_diagnostics", None)
         if diagnostics:
@@ -526,6 +540,7 @@ def start_background_run(
         daemon=True,
     )
     thread.start()
+    app.logger.info("Evaluation %s background thread started", run_id)
 
 
 @app.before_request
