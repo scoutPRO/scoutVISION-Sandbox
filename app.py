@@ -145,12 +145,20 @@ OUTPUT_MODES = {
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 app.secret_key = SECRET_KEY
+api_authorizations = {
+    "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+    }
+}
 api = Api(
     app,
     version="1.0",
     title="scoutVISION Evaluation API",
     description="Programmatic video evaluation API for scoutSMART integration.",
     doc="/api/docs",
+    authorizations=api_authorizations,
 )
 evaluation_ns = api.namespace(
     "api/v1",
@@ -535,6 +543,7 @@ def health() -> dict[str, str]:
 
 
 @evaluation_ns.route("/evaluations")
+@evaluation_ns.doc(security="ApiKeyAuth")
 class EvaluationResource(Resource):
     """Create a scoutSMART video evaluation."""
 
@@ -594,6 +603,7 @@ class EvaluationResource(Resource):
 
 
 @evaluation_ns.route("/evaluations/<string:evaluation_id>")
+@evaluation_ns.doc(security="ApiKeyAuth")
 class EvaluationStatusResource(Resource):
     """Return status and result for a scoutSMART video evaluation."""
 
