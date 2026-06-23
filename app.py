@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask_restx import Api, Resource, fields, reqparse
+from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
 from database import ensure_storage
@@ -44,6 +46,7 @@ from settings import (
     MAX_VIDEO_SECONDS,
     OUT_DIR,
     PROMPT_PATH,
+    SCOUTSMART_API_KEY,
     SECRET_KEY,
     UPLOAD_DIR,
 )
@@ -142,6 +145,76 @@ OUTPUT_MODES = {
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 app.secret_key = SECRET_KEY
+api = Api(
+    app,
+    version="1.0",
+    title="scoutVISION Evaluation API",
+    description="Programmatic video evaluation API for scoutSMART integration.",
+    doc="/api/docs",
+)
+evaluation_ns = api.namespace(
+    "api/v1",
+    description="Video evaluation endpoints.",
+)
+
+evaluation_upload_parser = reqparse.RequestParser()
+evaluation_upload_parser.add_argument(
+    "video",
+    type=FileStorage,
+    location="files",
+    required=True,
+    help="Video file to evaluate.",
+)
+evaluation_upload_parser.add_argument(
+    "account_id",
+    location="form",
+    required=True,
+    help="scoutSMART account identifier for attribution.",
+)
+evaluation_upload_parser.add_argument(
+    "user_id",
+    location="form",
+    required=False,
+    help="Optional scoutSMART user identifier for attribution.",
+)
+evaluation_upload_parser.add_argument(
+    "review_type",
+    location="form",
+    required=False,
+    default="general",
+    help="Review type. One of: general, swot, position_fit, follow_up_questions.",
+)
+evaluation_upload_parser.add_argument(
+    "player_focus",
+    location="form",
+    required=False,
+    help="Optional description of the player Gemini should focus on.",
+)
+evaluation_upload_parser.add_argument(
+    "evaluation_request",
+    location="form",
+    required=False,
+    help="Optional coaching/evaluation instruction.",
+)
+evaluation_response_model = evaluation_ns.model(
+    "EvaluationResponse",
+    {
+        "evaluation_id": fields.String,
+        "status": fields.String,
+        "review_type": fields.String,
+        "result": fields.Raw,
+        "response_text": fields.String,
+        "usage": fields.Raw,
+    },
+)
+evaluation_error_model = evaluation_ns.model(
+    "EvaluationError",
+    {
+        "evaluation_id": fields.String,
+        "error": fields.String,
+        "status": fields.String,
+    },
+)
 
 
 def init_db() -> None:
@@ -247,6 +320,50 @@ def validate_review_settings(output_mode: str, model: str) -> str | None:
     if model not in GEMINI_MODELS:
         return "Choose one of the available Gemini models."
     return None
+
+
+def validate_api_key() -> tuple[dict[str, str], int] | None:
+    """Return an API auth error when a shared scoutSMART API key is configured."""
+    if not SCOUTSMART_API_KEY:
+        return None
+
+    supplied_key = request.headers.get("X-API-Key", "")
+    if supplied_key != SCOUTSMART_API_KEY:
+        return {"error": "Invalid or missing API key.", "status": "failed"}, 401
+    return None
+
+
+def build_api_user_prompt(player_focus: str, evaluation_request: str) -> str:
+    """Build the user prompt from scoutSMART API form fields."""
+    sections = []
+    if player_focus:
+        sections.append(f"PLAYER TO FOCUS ON: {player_focus}")
+    sections.append(f"EVALUATION REQUEST: {evaluation_request or DEFAULT_USER_PROMPT}")
+    return "\n\n".join(sections)
+
+
+def parse_api_result(parsed_response_json: str | None) -> dict | list | str | None:
+    """Return a JSON result payload when possible, otherwise response text."""
+    if not parsed_response_json:
+        return None
+    try:
+        return json.loads(parsed_response_json)
+    except json.JSONDecodeError:
+        return parsed_response_json
+
+
+def extract_usage_metadata(full_response_json: str | None) -> dict:
+    """Extract Gemini usage metadata from a stored full response payload."""
+    if not full_response_json:
+        return {}
+    try:
+        full_response = json.loads(full_response_json)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(full_response, dict):
+        return {}
+    usage = full_response.get("usage_metadata") or full_response.get("usageMetadata") or {}
+    return usage if isinstance(usage, dict) else {}
 
 
 def create_queued_review(
@@ -375,6 +492,113 @@ def ensure_db() -> None:
 def health() -> dict[str, str]:
     """Return a simple health-check response."""
     return {"status": "ok"}
+
+
+@evaluation_ns.route("/evaluations")
+class EvaluationResource(Resource):
+    """Create a scoutSMART video evaluation."""
+
+    @evaluation_ns.expect(evaluation_upload_parser)
+    @evaluation_ns.response(200, "Evaluation completed.", evaluation_response_model)
+    @evaluation_ns.response(400, "Invalid request.", evaluation_error_model)
+    @evaluation_ns.response(401, "Unauthorized.", evaluation_error_model)
+    @evaluation_ns.response(500, "Evaluation failed.", evaluation_error_model)
+    def post(self):
+        """Evaluate one uploaded video and return the completed Gemini response."""
+        auth_error = validate_api_key()
+        if auth_error is not None:
+            return auth_error
+
+        video = request.files.get("video")
+        if not video or not video.filename:
+            return {"error": "Upload a video file.", "status": "failed"}, 400
+        if not allowed_video(video.filename):
+            return {"error": "Unsupported video file type.", "status": "failed"}, 400
+
+        account_id = request.form.get("account_id", "").strip()
+        if not account_id:
+            return {"error": "account_id is required.", "status": "failed"}, 400
+
+        run_id = str(uuid.uuid4())
+        safe_name = secure_filename(video.filename)
+        stored_path = UPLOAD_DIR / f"{run_id}_{safe_name}"
+        video.save(stored_path)
+
+        output_mode = request.form.get("review_type", "general").strip() or "general"
+        error = validate_review_settings(output_mode, DEFAULT_MODEL)
+        if error:
+            delete_video(stored_path)
+            return {"evaluation_id": run_id, "error": error, "status": "failed"}, 400
+
+        user_prompt = build_api_user_prompt(
+            request.form.get("player_focus", "").strip(),
+            request.form.get("evaluation_request", "").strip(),
+        )
+        boilerplate_prompt = load_boilerplate_prompt()
+        full_prompt = build_full_prompt(boilerplate_prompt, output_mode, user_prompt)
+        review = PromptRun(
+            id=run_id,
+            created_at=datetime.now(UTC),
+            user_id=None,
+            external_account_id=account_id,
+            external_user_id=request.form.get("user_id", "").strip() or None,
+            integration_source="scoutsmart_api",
+            video_filename=video.filename,
+            stored_video_path=str(stored_path),
+            video_duration_seconds=None,
+            model=DEFAULT_MODEL,
+            boilerplate_prompt=boilerplate_prompt,
+            user_prompt=user_prompt,
+            full_prompt=full_prompt,
+            status="processing",
+        )
+        create_run(review)
+
+        try:
+            duration = get_video_duration(stored_path)
+            if duration > MAX_VIDEO_SECONDS:
+                raise RuntimeError(
+                    f"Video is {duration:.1f} seconds; max is {MAX_VIDEO_SECONDS} seconds."
+                )
+            response_text, parsed_response_json, full_response_json = call_gemini(
+                stored_path,
+                full_prompt,
+                DEFAULT_MODEL,
+            )
+            update_run(
+                run_id,
+                video_duration_seconds=duration,
+                response_text=response_text,
+                parsed_response_json=parsed_response_json,
+                full_response_json=full_response_json,
+                status="completed",
+                error=None,
+            )
+            completed_run = find_run(run_id)
+            if completed_run is not None:
+                export_run_artifacts(completed_run)
+        except Exception as exc:
+            app.logger.exception(
+                "API evaluation %s failed while processing %s.",
+                run_id,
+                stored_path,
+            )
+            update_run(run_id, status="failed", error=str(exc))
+            if not KEEP_UPLOADED_VIDEOS and not KEEP_FAILED_UPLOADS:
+                delete_video(stored_path)
+            return {"evaluation_id": run_id, "error": str(exc), "status": "failed"}, 500
+
+        if not KEEP_UPLOADED_VIDEOS:
+            delete_video(stored_path)
+
+        return {
+            "evaluation_id": run_id,
+            "status": "completed",
+            "review_type": output_mode,
+            "result": parse_api_result(parsed_response_json),
+            "response_text": response_text,
+            "usage": extract_usage_metadata(full_response_json),
+        }
 
 
 @app.get("/")
