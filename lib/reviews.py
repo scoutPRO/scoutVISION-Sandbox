@@ -114,7 +114,7 @@ def create_queued_review(
         5,
     )
     LOGGER.info(
-        "Evaluation %s queued for %s using %s",
+        "[%s] Evaluation queued for %s using %s",
         run_id,
         video_filename,
         model,
@@ -125,7 +125,7 @@ def create_queued_review(
 
 def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
     """Process one queued run and persist the Gemini result or failure."""
-    LOGGER.info("Evaluation %s processing started", run_id)
+    LOGGER.info("[%s] Evaluation processing started", run_id)
     update_run(run_id, status="processing", error=None)
     set_progress(
         run_id,
@@ -142,7 +142,7 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
             )
         update_run(run_id, video_duration_seconds=duration)
         LOGGER.info(
-            "Evaluation %s video validated: %.2f seconds",
+            "[%s] Evaluation video validated: %.2f seconds",
             run_id,
             duration,
         )
@@ -152,7 +152,7 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
             "Step 2 of 2: Video validated and ready for Gemini.",
             25,
         )
-        LOGGER.info("Evaluation %s Gemini review started", run_id)
+        LOGGER.info("[%s] Evaluation Gemini review started", run_id)
         response_text, parsed_response_json, full_response_json = call_gemini(
             video_path,
             full_prompt,
@@ -176,12 +176,12 @@ def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> 
         if completed_run is not None:
             export_run_artifacts(completed_run)
         set_progress(run_id, "completed", "Gemini review is ready.", 100)
-        LOGGER.info("Evaluation %s completed", run_id)
+        LOGGER.info("[%s] Evaluation completed", run_id)
     except Exception as exc:
         diagnostics = getattr(exc, "gemini_file_diagnostics", None)
         if diagnostics:
-            LOGGER.error("Review %s Gemini file diagnostics: %s", run_id, diagnostics)
-        LOGGER.exception("Review %s failed while processing %s.", run_id, video_path)
+            LOGGER.error("[%s] Review Gemini file diagnostics: %s", run_id, diagnostics)
+        LOGGER.exception("[%s] Review failed while processing %s.", run_id, video_path)
         update_run(run_id, status="failed", error=str(exc))
         set_progress(run_id, "failed", str(exc), 100)
         if not KEEP_UPLOADED_VIDEOS and not KEEP_FAILED_UPLOADS:
@@ -204,4 +204,4 @@ def start_background_run(
         daemon=True,
     )
     thread.start()
-    LOGGER.info("Evaluation %s background thread started", run_id)
+    LOGGER.info("[%s] Evaluation background thread started", run_id)
