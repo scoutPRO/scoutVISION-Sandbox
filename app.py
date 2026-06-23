@@ -5,6 +5,7 @@ recruit highlight reels.
 """
 
 import json
+import logging
 import os
 import re
 import threading
@@ -145,6 +146,8 @@ OUTPUT_MODES = {
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 app.secret_key = SECRET_KEY
+logging.basicConfig(level=logging.INFO)
+app.logger.setLevel(logging.INFO)
 api_authorizations = {
     "ApiKeyAuth": {
         "type": "apiKey",
