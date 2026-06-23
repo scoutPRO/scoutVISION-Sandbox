@@ -146,8 +146,23 @@ OUTPUT_MODES = {
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 app.secret_key = SECRET_KEY
-logging.basicConfig(level=logging.INFO)
-app.logger.setLevel(logging.INFO)
+
+
+def configure_logging() -> None:
+    """Ensure app INFO logs are visible alongside Werkzeug access logs."""
+    formatter = logging.Formatter("%(levelname)-5s [%(name)s] %(message)s")
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    handler.setLevel(logging.INFO)
+
+    app.logger.handlers.clear()
+    app.logger.addHandler(handler)
+    app.logger.setLevel(logging.INFO)
+    app.logger.propagate = False
+
+
+configure_logging()
+app.logger.info("Application logging initialized")
 api_authorizations = {
     "ApiKeyAuth": {
         "type": "apiKey",
