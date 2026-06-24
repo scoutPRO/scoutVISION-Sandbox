@@ -60,6 +60,14 @@ app.secret_key = SECRET_KEY
 LOGGER = logging.getLogger("scoutvision_sandbox")
 
 
+def enable_app_loggers() -> None:
+    """Re-enable app loggers after Alembic applies its logging config."""
+    app.logger.disabled = False
+    app.logger.setLevel(logging.INFO)
+    LOGGER.disabled = False
+    LOGGER.setLevel(logging.INFO)
+
+
 def configure_logging() -> None:
     """Ensure app INFO logs are visible alongside Werkzeug access logs."""
     logging.basicConfig(
@@ -67,10 +75,7 @@ def configure_logging() -> None:
         format="%(levelname)-5s [%(name)s] %(message)s",
         force=True,
     )
-    app.logger.disabled = False
-    app.logger.setLevel(logging.INFO)
-    LOGGER.disabled = False
-    LOGGER.setLevel(logging.INFO)
+    enable_app_loggers()
 
 
 configure_logging()
@@ -80,7 +85,7 @@ LOGGER.info("Application logging initialized")
 def init_db() -> None:
     """Create runtime directories and apply database migrations."""
     ensure_storage()
-    configure_logging()
+    enable_app_loggers()
 
 
 @app.template_filter("friendly_datetime")

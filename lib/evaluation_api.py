@@ -1,8 +1,9 @@
 """Flask-RESTX routes for the scoutSMART evaluation API."""
 
+import secrets
 import uuid
 
-from flask import request, url_for
+from flask import request
 from flask_restx import Api, Resource, fields, reqparse
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
@@ -20,7 +21,7 @@ def validate_api_key() -> tuple[dict[str, str], int] | None:
         return None
 
     supplied_key = request.headers.get("X-API-Key", "")
-    if supplied_key != SCOUTSMART_API_KEY:
+    if not secrets.compare_digest(supplied_key, SCOUTSMART_API_KEY):
         return {"error": "Invalid or missing API key.", "status": "failed"}, 401
     return None
 
@@ -159,10 +160,7 @@ def register_evaluation_api(api: Api) -> None:
             return {
                 "evaluation_id": review.id,
                 "status": review.status,
-                "status_url": url_for(
-                    "api/v1_evaluation_status_resource",
-                    evaluation_id=review.id,
-                ),
+                "status_url": f"/api/v1/evaluations/{review.id}",
             }, 202
 
     @evaluation_ns.route("/evaluations/<string:evaluation_id>")
