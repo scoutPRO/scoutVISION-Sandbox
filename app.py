@@ -4,19 +4,17 @@ This is a small beta tester app for iterating on Gemini prompts against
 recruit highlight reels.
 """
 
-import json
+import logging
 import os
-import re
-import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask_restx import Api
 from werkzeug.utils import secure_filename
 
 from database import ensure_storage
-from lib.artifacts import export_run_artifacts
 from lib.auth import (
     admin_required,
     authenticate_user,
@@ -28,140 +26,66 @@ from lib.auth import (
     logout_user,
     wants_json_response,
 )
-from lib.gemini_client import call_gemini
-from lib.progress import run_status_payload, set_progress
-from lib.prompt_runs import create_run, find_run, recent_runs, update_run
+from lib.evaluation_api import register_evaluation_api
+from lib.progress import run_status_payload
+from lib.prompt_runs import find_run, recent_runs, update_run
+from lib.prompts import (
+    DEFAULT_USER_PROMPT,
+    OUTPUT_MODES,
+    load_boilerplate_prompt,
+    parse_response_json,
+    review_type_label_from_prompt,
+    user_prompt_display_sections,
+    user_prompt_section_text,
+    validate_review_settings,
+)
+from lib.reviews import as_utc_datetime, create_queued_review
 from lib.users import list_users
-from lib.video import allowed_video, delete_expired_uploads, delete_video, get_video_duration
-from models import PromptRun
+from lib.video import allowed_video, delete_expired_uploads
 from settings import (
     ALLOW_SIGNUP,
     DEFAULT_MODEL,
     GEMINI_MODELS,
-    KEEP_FAILED_UPLOADS,
-    KEEP_UPLOADED_VIDEOS,
     MAX_UPLOAD_MB,
     MAX_VIDEO_SECONDS,
     OUT_DIR,
-    PROMPT_PATH,
     SECRET_KEY,
     UPLOAD_DIR,
 )
-
-DEFAULT_USER_PROMPT = "Identify what a coach should notice first about this recruit."
-USER_PROMPT_SECTION_LABELS = {
-    "PLAYER TO FOCUS ON": "Player to Focus On",
-    "EVALUATION REQUEST": "Evaluation Request",
-}
-USER_PROMPT_SECTION_RE = re.compile(
-    r"(PLAYER TO FOCUS ON|EVALUATION REQUEST):\s*",
-    re.IGNORECASE,
-)
-OUTPUT_MODES = {
-    "general": {
-        "label": "General Review",
-        "instruction": (
-            "Provide a balanced coach-facing review with summary, strengths, concerns, "
-            "notable moments, follow-up questions, and fit signals.\n\n"
-            "Return JSON with this shape:\n"
-            "{\n"
-            '  "summary": "short coach-facing summary",\n'
-            '  "strengths": ["specific strengths visible in the reel"],\n'
-            '  "concerns_or_unknowns": ['
-            '"limitations, unclear signals, or things the video does not prove"'
-            "],\n"
-            '  "notable_moments": [\n'
-            "    {\n"
-            '      "timestamp": "mm:ss",\n'
-            '      "observation": "what happened",\n'
-            '      "why_it_matters": "why a coach might care"\n'
-            "    }\n"
-            "  ],\n"
-            '  "coach_follow_up_questions": ["questions the coach should ask or verify"],\n'
-            '  "fit_signals": ['
-            '"signals related to role, athletic traits, decision making, effort, or coachability"'
-            "]\n"
-            "}"
-        ),
-    },
-    "swot": {
-        "label": "SWOT",
-        "instruction": (
-            "Frame the response as a SWOT review: strengths, weaknesses, opportunities, "
-            "and threats or risks. Use only evidence visible in the video.\n\n"
-            "Return JSON with this shape:\n"
-            "{\n"
-            '  "summary": "short coach-facing SWOT summary",\n'
-            '  "strengths": ["visible strengths or advantages"],\n'
-            '  "weaknesses": ["visible limitations or underdeveloped areas"],\n'
-            '  "opportunities": ["ways the player could be used, developed, or evaluated"],\n'
-            '  "threats": ["risks, unknowns, or reasons to request more evidence"],\n'
-            '  "coach_follow_up_questions": ["questions to ask after watching the reel"]\n'
-            "}"
-        ),
-    },
-    "position_fit": {
-        "label": "Position Fit",
-        "instruction": (
-            "Focus on position fit, likely role, transferable skills, and what additional "
-            "film a coach would need before making a roster decision.\n\n"
-            "Return JSON with this shape:\n"
-            "{\n"
-            '  "summary": "short position-fit summary",\n'
-            '  "best_fit_positions": ["positions or roles that fit the visible traits"],\n'
-            '  "role_projection": "how the player might be used by a team",\n'
-            '  "supporting_evidence": [\n'
-            "    {\n"
-            '      "timestamp": "mm:ss",\n'
-            '      "observation": "visible evidence for the fit",\n'
-            '      "fit_signal": "trait, role, or skill shown"\n'
-            "    }\n"
-            "  ],\n"
-            '  "concerns_or_unknowns": ["fit-related unknowns or missing evidence"],\n'
-            '  "additional_film_to_request": ["specific clips a coach should ask for"]\n'
-            "}"
-        ),
-    },
-    "follow_up_questions": {
-        "label": "Follow-Up Questions",
-        "instruction": (
-            "Focus on practical follow-up questions a coach should ask the player, "
-            "club/team, or recruiting contact after watching this reel.\n\n"
-            "Return JSON with this shape:\n"
-            "{\n"
-            '  "summary": "short summary of what the reel shows and does not prove",\n'
-            '  "questions_for_player": ["questions to ask the player directly"],\n'
-            '  "questions_for_coach_or_team": ["questions for a coach, club, or team contact"],\n'
-            '  "film_to_request": ["specific extra film or situations to request"],\n'
-            '  "verification_items": ["claims, context, or traits to verify"]\n'
-            "}"
-        ),
-    },
-}
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 app.secret_key = SECRET_KEY
 
+LOGGER = logging.getLogger("scoutvision_sandbox")
+
+
+def enable_app_loggers() -> None:
+    """Re-enable app loggers after Alembic applies its logging config."""
+    app.logger.disabled = False
+    app.logger.setLevel(logging.INFO)
+    LOGGER.disabled = False
+    LOGGER.setLevel(logging.INFO)
+
+
+def configure_logging() -> None:
+    """Ensure app INFO logs are visible alongside Werkzeug access logs."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)-5s [%(name)s] %(message)s",
+        force=True,
+    )
+    enable_app_loggers()
+
+
+configure_logging()
+LOGGER.info("Application logging initialized")
+
 
 def init_db() -> None:
     """Create runtime directories and apply database migrations."""
     ensure_storage()
-
-
-def load_boilerplate_prompt() -> str:
-    """Load the coach-facing boilerplate prompt from disk."""
-    return PROMPT_PATH.read_text(encoding="utf-8").strip()
-
-
-def parse_response_json(response_json: str | None) -> dict | list | None:
-    """Parse the stored Gemini response JSON for structured display."""
-    if not response_json:
-        return None
-    try:
-        return json.loads(response_json)
-    except json.JSONDecodeError:
-        return None
+    enable_app_loggers()
 
 
 @app.template_filter("friendly_datetime")
@@ -172,195 +96,12 @@ def friendly_datetime(value: datetime | None) -> str:
     return value.strftime("%d %b %Y, %H:%M")
 
 
-def as_utc_datetime(value: datetime) -> datetime:
-    """Return a timezone-aware UTC datetime, assuming naive DB values are UTC."""
-    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
-
-
 @app.template_filter("iso_datetime")
 def iso_datetime(value: datetime | None) -> str:
     """Format a datetime as ISO-8601 for browser-local rendering."""
     if value is None:
         return ""
     return as_utc_datetime(value).isoformat()
-
-
-def build_full_prompt(boilerplate_prompt: str, output_mode: str, user_prompt: str) -> str:
-    """Build the complete prompt sent to Gemini for one review."""
-    output_mode_instruction = OUTPUT_MODES[output_mode]["instruction"]
-    return (
-        f"{boilerplate_prompt}\n\n"
-        f"OUTPUT MODE:\n{output_mode_instruction}\n\n"
-        f"USER REQUEST:\n{user_prompt}"
-    )
-
-
-def review_type_label_from_prompt(full_prompt: str) -> str:
-    """Return the review type label represented by a stored full prompt."""
-    for mode_meta in OUTPUT_MODES.values():
-        if mode_meta["instruction"] in full_prompt:
-            return mode_meta["label"]
-    return "Unknown"
-
-
-def user_prompt_display_sections(user_prompt: str | None) -> list[dict[str, str]]:
-    """Return user prompt sections with friendly labels for display."""
-    if not user_prompt:
-        return []
-
-    cleaned_prompt = user_prompt.strip()
-    matches = list(USER_PROMPT_SECTION_RE.finditer(cleaned_prompt))
-    if not matches:
-        return [{"label": "", "text": cleaned_prompt}]
-
-    sections = []
-    leading_text = cleaned_prompt[: matches[0].start()].strip()
-    if leading_text:
-        sections.append({"label": "", "text": leading_text})
-
-    for index, match in enumerate(matches):
-        text_start = match.end()
-        text_end = matches[index + 1].start() if index + 1 < len(matches) else None
-        text = cleaned_prompt[text_start:text_end].strip()
-        if not text:
-            continue
-        label = USER_PROMPT_SECTION_LABELS[match.group(1).upper()]
-        sections.append({"label": label, "text": text})
-
-    return sections
-
-
-def user_prompt_section_text(user_prompt: str | None, label: str) -> str:
-    """Return one parsed user prompt section value by friendly label."""
-    for section in user_prompt_display_sections(user_prompt):
-        if section["label"] == label:
-            return section["text"]
-    return ""
-
-
-def validate_review_settings(output_mode: str, model: str) -> str | None:
-    """Return a validation error for submitted review settings, if any."""
-    if output_mode not in OUTPUT_MODES:
-        return "Choose one of the available output modes."
-    if model not in GEMINI_MODELS:
-        return "Choose one of the available Gemini models."
-    return None
-
-
-def create_queued_review(
-    *,
-    run_id: str | None = None,
-    user_id: str,
-    video_filename: str,
-    stored_path: Path,
-    model: str,
-    user_prompt: str,
-    output_mode: str,
-    video_duration_seconds: float | None = None,
-) -> PromptRun:
-    """Create and start a queued review for an already stored video."""
-    run_id = run_id or str(uuid.uuid4())
-    boilerplate_prompt = load_boilerplate_prompt()
-    full_prompt = build_full_prompt(boilerplate_prompt, output_mode, user_prompt)
-    review = PromptRun(
-        id=run_id,
-        created_at=datetime.now(UTC),
-        user_id=user_id,
-        video_filename=video_filename,
-        stored_video_path=str(stored_path),
-        video_duration_seconds=video_duration_seconds,
-        model=model,
-        boilerplate_prompt=boilerplate_prompt,
-        user_prompt=user_prompt,
-        full_prompt=full_prompt,
-        status="queued",
-    )
-    create_run(review)
-    set_progress(
-        run_id,
-        "queued",
-        "Step 2 of 2: Video saved. Waiting to start the Gemini review.",
-        5,
-    )
-    start_background_run(run_id, stored_path, full_prompt, model)
-    return review
-
-
-def process_run(run_id: str, stored_path: str, full_prompt: str, model: str) -> None:
-    """Process one queued run and persist the Gemini result or failure."""
-    update_run(run_id, status="processing", error=None)
-    set_progress(
-        run_id,
-        "validating_video",
-        "Step 2 of 2: Checking video duration.",
-        15,
-    )
-    video_path = Path(stored_path)
-    try:
-        duration = get_video_duration(video_path)
-        if duration > MAX_VIDEO_SECONDS:
-            raise RuntimeError(
-                f"Video is {duration:.1f} seconds; max is {MAX_VIDEO_SECONDS} seconds."
-            )
-        update_run(run_id, video_duration_seconds=duration)
-        set_progress(
-            run_id,
-            "video_ready",
-            "Step 2 of 2: Video validated and ready for Gemini.",
-            25,
-        )
-        response_text, parsed_response_json, full_response_json = call_gemini(
-            video_path,
-            full_prompt,
-            model,
-            progress_callback=lambda stage, message, percent: set_progress(
-                run_id,
-                stage,
-                message,
-                percent,
-            ),
-        )
-        update_run(
-            run_id,
-            response_text=response_text,
-            parsed_response_json=parsed_response_json,
-            full_response_json=full_response_json,
-            status="completed",
-            error=None,
-        )
-        completed_run = find_run(run_id)
-        if completed_run is not None:
-            export_run_artifacts(completed_run)
-        set_progress(run_id, "completed", "Gemini review is ready.", 100)
-    except Exception as exc:
-        diagnostics = getattr(exc, "gemini_file_diagnostics", None)
-        if diagnostics:
-            app.logger.error("Review %s Gemini file diagnostics: %s", run_id, diagnostics)
-        app.logger.exception("Review %s failed while processing %s.", run_id, video_path)
-        update_run(run_id, status="failed", error=str(exc))
-        set_progress(run_id, "failed", str(exc), 100)
-        if not KEEP_UPLOADED_VIDEOS and not KEEP_FAILED_UPLOADS:
-            delete_video(video_path)
-    else:
-        if not KEEP_UPLOADED_VIDEOS:
-            delete_video(video_path)
-
-
-def start_background_run(
-    run_id: str,
-    stored_path: Path,
-    full_prompt: str,
-    model: str,
-) -> None:
-    """Start a daemon thread that processes one prompt run."""
-    thread = threading.Thread(
-        target=process_run,
-        args=(run_id, str(stored_path), full_prompt, model),
-        daemon=True,
-    )
-    thread.start()
 
 
 @app.before_request
@@ -618,6 +359,24 @@ def feedback(run_id: str):
     notes = request.form.get("notes", "").strip()
     update_run(run_id, feedback_rating=rating, feedback_notes=notes)
     return redirect(url_for("result", run_id=run_id))
+
+
+api_authorizations = {
+    "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+    }
+}
+api = Api(
+    app,
+    version="1.0",
+    title="scoutVISION Evaluation API",
+    description="Programmatic video evaluation API for scoutSMART integration.",
+    doc="/api/docs",
+    authorizations=api_authorizations,
+)
+register_evaluation_api(api)
 
 
 if __name__ == "__main__":
