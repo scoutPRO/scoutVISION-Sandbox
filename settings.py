@@ -16,6 +16,14 @@ def env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_list(name: str, default: list[str] | None = None) -> list[str]:
+    """Return a comma-separated environment variable as a clean list."""
+    value = os.getenv(name)
+    if not value:
+        return list(default or [])
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def normalize_gemini_model(model_name: str) -> str:
     """Return a Gemini model name using the Google API model prefix."""
     if model_name.startswith("models/"):
@@ -62,3 +70,12 @@ BOOTSTRAP_ADMIN_PASSWORD = os.getenv("BOOTSTRAP_ADMIN_PASSWORD")
 BOOTSTRAP_ADMIN_NAME = os.getenv("BOOTSTRAP_ADMIN_NAME", "Admin")
 ALLOW_SIGNUP = env_bool("ALLOW_SIGNUP", True)
 SCOUTSMART_API_KEY = os.getenv("SCOUTSMART_API_KEY")
+
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+EMAIL_FROM = os.getenv(
+    "EMAIL_FROM",
+    "scoutVISION <noreply@red-shield.ai>",
+)
+WEEKLY_REPORT_RECIPIENTS = env_list("WEEKLY_REPORT_RECIPIENTS")
+WEEKLY_REPORT_DAYS = int(os.getenv("WEEKLY_REPORT_DAYS", "7"))
+APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip("/")

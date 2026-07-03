@@ -67,6 +67,12 @@ with `ruff format --check`.
 - `KEEP_UPLOADED_VIDEOS`: default `true`; when true, successful review videos remain available for Review Again until upload retention removes them.
 - `KEEP_FAILED_UPLOADS`: default `true`; when true, failed review videos are kept for debugging.
 - `UPLOAD_RETENTION_DAYS`: default `3`; uploaded video files older than this are deleted during requests.
+- `SCOUTSMART_API_KEY`: optional shared key for the scoutSMART integration API.
+- `APP_BASE_URL`: optional public app URL used for links in usage report emails.
+- `RESEND_API_KEY`: optional Resend API key for email delivery. Required for weekly usage reports.
+- `EMAIL_FROM`: default `scoutVISION <noreply@red-shield.ai>`.
+- `WEEKLY_REPORT_RECIPIENTS`: comma-separated recipient list for weekly usage reports.
+- `WEEKLY_REPORT_DAYS`: default `7`.
 - `PORT`: used by Railway, default local port `5055`.
 
 ## Database Migrations
@@ -83,6 +89,38 @@ After changing SQLAlchemy models, create a migration with:
 ```bash
 poetry run alembic revision --autogenerate -m "Describe schema change"
 ```
+
+
+### Weekly Usage Report
+
+The app includes a plain-text weekly report command for Sandbox usage. It lists
+active users in the trailing window, review counts, status totals, video volume,
+and feedback attached to reviews.
+
+Preview locally without sending email:
+
+```bash
+poetry run python -m scripts.weekly_usage_report --dry-run
+```
+
+Send the report using Resend:
+
+```bash
+poetry run python -m scripts.weekly_usage_report
+```
+
+For Railway, configure a scheduled job or secondary cron service with that same
+command. Set these variables on the Railway service before enabling the schedule:
+
+```bash
+RESEND_API_KEY=<Resend API key>
+EMAIL_FROM=scoutVISION <noreply@red-shield.ai>
+WEEKLY_REPORT_RECIPIENTS=chris@example.com,chan@example.com,diane@example.com
+APP_BASE_URL=https://scoutvision-sandbox-production.up.railway.app
+```
+
+`WEEKLY_REPORT_DAYS=7` is the default. You can override the window for an ad hoc
+run with `--days 14` or send to a one-off recipient with `--to person@example.com`.
 
 ## Output Artifacts
 
