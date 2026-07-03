@@ -24,6 +24,17 @@ def env_list(name: str, default: list[str] | None = None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def env_int(name: str, default: int) -> int:
+    """Return an integer environment variable value, falling back when invalid."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 def normalize_gemini_model(model_name: str) -> str:
     """Return a Gemini model name using the Google API model prefix."""
     if model_name.startswith("models/"):
@@ -77,5 +88,5 @@ EMAIL_FROM = os.getenv(
     "scoutVISION <noreply@red-shield.ai>",
 )
 WEEKLY_REPORT_RECIPIENTS = env_list("WEEKLY_REPORT_RECIPIENTS")
-WEEKLY_REPORT_DAYS = int(os.getenv("WEEKLY_REPORT_DAYS", "7"))
+WEEKLY_REPORT_DAYS = env_int("WEEKLY_REPORT_DAYS", 7)
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").rstrip("/")

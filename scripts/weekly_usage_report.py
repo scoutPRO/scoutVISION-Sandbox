@@ -42,6 +42,8 @@ def main() -> int:
         help="Print the report without sending email.",
     )
     args = parser.parse_args()
+    if args.days < 1:
+        parser.error("--days must be a positive integer")
 
     ensure_storage()
     report = build_weekly_usage_report(days=args.days)

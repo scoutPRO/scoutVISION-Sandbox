@@ -114,7 +114,7 @@ command. Set these variables on the Railway service before enabling the schedule
 
 ```bash
 RESEND_API_KEY=<Resend API key>
-EMAIL_FROM=scoutVISION <noreply@red-shield.ai>
+EMAIL_FROM="scoutVISION <noreply@red-shield.ai>"
 WEEKLY_REPORT_RECIPIENTS=chris@example.com,chan@example.com,diane@example.com
 APP_BASE_URL=https://scoutvision-sandbox-production.up.railway.app
 ```
