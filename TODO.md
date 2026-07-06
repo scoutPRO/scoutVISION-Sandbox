@@ -60,6 +60,7 @@
 
 - [ ] Consider migrating from plain SQLAlchemy to Flask-SQLAlchemy if app/request integration becomes more useful than explicit sessions.
 - [ ] Consider Postgres, likely AWS RDS, when the app moves beyond local sandbox usage.
+- [ ] Move Railway deployment from SQLite volume to Railway Postgres so the weekly usage report can run from a separate cron service.
 - [ ] Keep large video/artifact storage outside the relational database.
 - [ ] Consider S3 or another object store for uploaded videos and output artifacts when deployed.
 

@@ -42,12 +42,21 @@ def normalize_gemini_model(model_name: str) -> str:
     return f"models/{model_name}"
 
 
+def normalize_database_url(database_url: str) -> str:
+    """Return a SQLAlchemy URL compatible with the installed database drivers."""
+    if database_url.startswith("postgres://"):
+        return database_url.replace("postgres://", "postgresql+psycopg://", 1)
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return database_url
+
+
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 OUT_DIR = Path(os.getenv("OUT_DIR", BASE_DIR / "out"))
 DB_PATH = Path(os.getenv("DATABASE_PATH", DATA_DIR / "prompt_lab.sqlite3"))
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
+DATABASE_URL = normalize_database_url(os.getenv("DATABASE_URL") or f"sqlite:///{DB_PATH}")
 PROMPT_PATH = Path(os.getenv("BOILERPLATE_PROMPT_PATH", BASE_DIR / "prompts/boilerplate.txt"))
 MAX_VIDEO_SECONDS = int(os.getenv("MAX_VIDEO_SECONDS", "300"))
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "800"))
