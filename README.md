@@ -90,6 +90,31 @@ After changing SQLAlchemy models, create a migration with:
 poetry run alembic revision --autogenerate -m "Describe schema change"
 ```
 
+### Migrating SQLite To Postgres
+
+For Railway cron jobs, use Postgres so the web service and scheduled report
+service can read the same database via `DATABASE_URL`. The app accepts Railway's
+`postgres://`/`postgresql://` URLs and normalizes them for the installed
+Postgres driver.
+
+To copy an existing SQLite database into a fresh Postgres database:
+
+```bash
+DATABASE_URL=postgresql://user:password@host:port/dbname \
+  poetry run python -m scripts.migrate_sqlite_to_postgres \
+  --sqlite-path data/prompt_lab.sqlite3
+```
+
+If you are intentionally re-running against a non-empty target, clear and replace
+the imported Sandbox tables with:
+
+```bash
+DATABASE_URL=postgresql://user:password@host:port/dbname \
+  poetry run python -m scripts.migrate_sqlite_to_postgres \
+  --sqlite-path data/prompt_lab.sqlite3 \
+  --replace
+```
+
 
 ### Weekly Usage Report
 
